@@ -14,9 +14,32 @@ async function main() {
     "🚚 الدليفري متاح لجميع المناطق";
 
   try {
-    await publishToFacebook(message);
+    const result = await publishToFacebook(message);
+
+    console.log("================================");
+    console.log("تم تنفيذ عملية النشر بنجاح ✅");
+    console.log("Facebook Post ID:", result.id);
+    console.log("================================");
+
   } catch (error) {
-    console.error("حدث خطأ أثناء النشر.");
+    console.error("================================");
+    console.error("فشل النشر على Facebook ❌");
+
+    if (error.response) {
+      console.error("HTTP Status:", error.response.status);
+      console.error(
+        "Facebook Error:",
+        JSON.stringify(error.response.data, null, 2)
+      );
+    } else {
+      console.error("Error:", error.message);
+    }
+
+    console.error("================================");
+
+    // مهم جدًا:
+    // يجعل GitHub Actions أحمر عند فشل النشر
+    process.exit(1);
   }
 }
 
