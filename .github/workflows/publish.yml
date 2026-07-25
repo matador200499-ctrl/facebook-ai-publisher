@@ -27,14 +27,10 @@ jobs:
         with:
           node-version: 24
 
-      # 3 - تثبيت المكتبات
-      - name: Install dependencies
-        run: npm install
-
-      # 4 - تشغيل المشروع والنشر على Facebook
+      # 3 - تشغيل المشروع
       - name: Generate and Publish Facebook Post
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
-        run: npm start
+        run: node index.js
