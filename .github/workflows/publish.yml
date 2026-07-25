@@ -2,13 +2,9 @@ name: Facebook AI Publisher
 
 on:
   schedule:
-    # 4 مرات يوميًا - بتوقيت UTC
-    - cron: "0 9 * * *"
-    - cron: "0 13 * * *"
-    - cron: "0 17 * * *"
-    - cron: "0 21 * * *"
+    # 4 مرات يومياً بتوقيت UTC
+    - cron: "0 4,10,16,22 * * *"
 
-  # تشغيل يدوي من GitHub Actions
   workflow_dispatch:
 
 jobs:
@@ -17,20 +13,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1 - تحميل المشروع
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2 - إعداد Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: "20"
 
-      # 3 - تشغيل المشروع
+      - name: Install dependencies
+        run: |
+          npm install dotenv
+          npm install axios
+
       - name: Generate and Publish Facebook Post
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
-        run: node index.js
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          node index.js
