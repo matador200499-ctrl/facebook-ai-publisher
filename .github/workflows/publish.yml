@@ -1,18 +1,13 @@
 name: Facebook AI Publisher
 
 on:
-  # تشغيل تلقائي 4 مرات يوميًا
-  # الأوقات بتوقيت UTC
-  # تقريبًا 8 صباحًا - 12 ظهرًا - 4 عصرًا - 8 مساءً بتوقيت مصر
   schedule:
-    - cron: "0 5,9,13,17 * * *"
+    # تشغيل 4 مرات يوميًا
+    # 04:00 - 10:00 - 16:00 - 22:00 UTC
+    - cron: "0 4,10,16,22 * * *"
 
   # تشغيل يدوي من GitHub Actions
   workflow_dispatch:
-
-# السماح للـ GitHub Actions بعمل Commit و Push
-permissions:
-  contents: write
 
 jobs:
   publish:
@@ -22,15 +17,13 @@ jobs:
     steps:
 
       # ==========================================
-      # 1 - تحميل ملفات المشروع
+      # 1. تحميل ملفات المشروع
       # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       # ==========================================
-      # 2 - إعداد Node.js
+      # 2. تشغيل Node.js
       # ==========================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -38,39 +31,31 @@ jobs:
           node-version: "20"
 
       # ==========================================
-      # 3 - تثبيت المكتبات المطلوبة
+      # 3. تثبيت المكتبات المطلوبة
+      # لا نستخدم npm install بدون package.json
       # ==========================================
-      # المشروع يستخدم dotenv و axios
-      # ولا يوجد package.json حاليًا
       - name: Install dependencies
         run: |
-          npm install dotenv axios
+          npm install axios dotenv
 
       # ==========================================
-      # 4 - تشغيل البرنامج ونشر المنشور
+      # 4. توليد ونشر المنشور على Facebook
       # ==========================================
       - name: Generate and Publish Facebook Post
         env:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
-          FACEBOOK_ACCESS_TOKEN: ${{ secrets.FACEBOOK_ACCESS_TOKEN }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
         run: |
           node index.js
 
       # ==========================================
-      # 5 - حفظ تحديثات سلسلة المحتوى
+      # 5. حفظ نتيجة التشغيل
       # ==========================================
-      - name: Commit topic updates
+      - name: Save execution log
         if: always()
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add contentSeries.js topics.txt used_topics.txt 2>/dev/null || true
-
-          if git diff --cached --quiet; then
-            echo "لا توجد تغييرات لحفظها"
-          else
-            git commit -m "Update content series after Facebook post"
-            git push origin main
-          fi
+          echo "================================"
+          echo "Facebook AI Publisher Finished"
+          echo "================================"
+          echo "Date: $(date)"
+          echo "Status: ${{ job.status }}"
