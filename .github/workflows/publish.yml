@@ -2,12 +2,17 @@ name: Facebook AI Publisher
 
 on:
   schedule:
-    # تشغيل 4 مرات يوميًا
-    # 04:00 - 10:00 - 16:00 - 22:00 UTC
-    - cron: "0 4,10,16,22 * * *"
+    # 4 مرات يوميًا بتوقيت UTC
+    # 10:00 صباحًا بتوقيت مصر = 08:00 UTC
+    # 02:00 ظهرًا بتوقيت مصر = 12:00 UTC
+    # 06:00 مساءً بتوقيت مصر = 16:00 UTC
+    # 10:00 مساءً بتوقيت مصر = 20:00 UTC
+    - cron: "0 8,12,16,20 * * *"
 
-  # تشغيل يدوي من GitHub Actions
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   publish:
@@ -15,47 +20,32 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # ==========================================
-      # 1. تحميل ملفات المشروع
-      # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ==========================================
-      # 2. تشغيل Node.js
-      # ==========================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: 20
 
-      # ==========================================
-      # 3. تثبيت المكتبات المطلوبة
-      # لا نستخدم npm install بدون package.json
-      # ==========================================
       - name: Install dependencies
-        run: |
-          npm install axios dotenv
+        run: npm install axios dotenv
 
-      # ==========================================
-      # 4. توليد ونشر المنشور على Facebook
-      # ==========================================
       - name: Generate and Publish Facebook Post
         env:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
-        run: |
-          node index.js
+        run: node index.js
 
-      # ==========================================
-      # 5. حفظ نتيجة التشغيل
-      # ==========================================
-      - name: Save execution log
-        if: always()
+      - name: Save changes
         run: |
-          echo "================================"
-          echo "Facebook AI Publisher Finished"
-          echo "================================"
-          echo "Date: $(date)"
-          echo "Status: ${{ job.status }}"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add contentSeries.js
+
+          git diff --cached --quiet || git commit -m "Update Facebook content rotation"
+
+          git push
