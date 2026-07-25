@@ -10,7 +10,6 @@ const topics = [
       "📍 مكتبة شعاع بالرحاب\n" +
       "🚚 الدليفري متاح لجميع المناطق"
   },
-
   {
     title: "✏️ الأدوات المدرسية",
     message:
@@ -20,7 +19,6 @@ const topics = [
       "📍 مكتبة شعاع بالرحاب\n" +
       "🚚 الدليفري متاح لجميع المناطق"
   },
-
   {
     title: "📒 الكشاكيل والكراسات",
     message:
@@ -30,7 +28,6 @@ const topics = [
       "📍 مكتبة شعاع بالرحاب\n" +
       "🚚 الدليفري متاح لجميع المناطق"
   },
-
   {
     title: "🎓 مستلزمات الدراسة",
     message:
@@ -40,7 +37,6 @@ const topics = [
       "📍 مكتبة شعاع بالرحاب\n" +
       "🚚 الدليفري متاح لجميع المناطق"
   },
-
   {
     title: "✨ مكتبة شعاع بالرحاب",
     message:
@@ -52,7 +48,6 @@ const topics = [
       "📍 مكتبة شعاع بالرحاب\n" +
       "🚚 الدليفري متاح لجميع المناطق"
   },
-
   {
     title: "🚚 الدليفري",
     message:
@@ -62,7 +57,6 @@ const topics = [
       "📍 مكتبة شعاع بالرحاب\n" +
       "🚚 الدليفري متاح لجميع المناطق"
   },
-
   {
     title: "🛍️ عرض المكتبة",
     message:
@@ -72,7 +66,6 @@ const topics = [
       "📍 مكتبة شعاع بالرحاب\n" +
       "🚚 الدليفري متاح لجميع المناطق"
   },
-
   {
     title: "📖 نصيحة للطلاب",
     message:
@@ -84,24 +77,6 @@ const topics = [
   }
 ];
 
-function getNextTopic() {
-  const state = require("./contentState");
-
-  let index = Number(state.currentIndex || 0);
-
-  if (index >= topics.length) {
-    index = 0;
-  }
-
-  const topic = topics[index];
-
-  return {
-    topic,
-    nextIndex: (index + 1) % topics.length
-  };
-}
-
 module.exports = {
-  topics,
-  getNextTopic
+  topics
 };
