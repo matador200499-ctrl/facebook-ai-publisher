@@ -25,15 +25,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: 24
 
       # 3 - تثبيت المكتبات
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       # 4 - تشغيل المشروع والنشر على Facebook
-      - name: Generate and Publish
+      - name: Generate and Publish Facebook Post
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
