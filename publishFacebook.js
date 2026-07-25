@@ -5,17 +5,23 @@ async function publishToFacebook(message) {
   const pageId = process.env.FACEBOOK_PAGE_ID;
   const accessToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
 
-  if (!pageId || !accessToken) {
-    throw new Error(
-      "FACEBOOK_PAGE_ID أو FACEBOOK_PAGE_ACCESS_TOKEN غير موجود في ملف .env"
-    );
+  if (!pageId) {
+    throw new Error("FACEBOOK_PAGE_ID غير موجود في GitHub Secrets");
   }
+
+  if (!accessToken) {
+    throw new Error("FACEBOOK_PAGE_ACCESS_TOKEN غير موجود في GitHub Secrets");
+  }
+
+  console.log("Page ID موجود ✅");
+  console.log("Access Token موجود ✅");
+  console.log("جاري إرسال المنشور إلى Facebook...");
 
   try {
     const response = await axios.post(
       `https://graph.facebook.com/v23.0/${pageId}/feed`,
       {
-        message,
+        message: message,
         access_token: accessToken,
       }
     );
@@ -24,11 +30,17 @@ async function publishToFacebook(message) {
     console.log("Post ID:", response.data.id);
 
     return response.data;
+
   } catch (error) {
-    console.error(
-      "فشل النشر على Facebook ❌",
-      error.response?.data || error.message
-    );
+    console.error("Facebook API Error ❌");
+
+    if (error.response) {
+      console.error(
+        JSON.stringify(error.response.data, null, 2)
+      );
+    } else {
+      console.error(error.message);
+    }
 
     throw error;
   }
