@@ -1,13 +1,16 @@
 name: Facebook AI Publisher
 
 on:
+  # تشغيل تلقائي 4 مرات يوميًا
+  # الأوقات بتوقيت UTC
+  # تقريبًا 8 صباحًا - 12 ظهرًا - 4 عصرًا - 8 مساءً بتوقيت مصر
   schedule:
-    # 4 مرات يوميًا بتوقيت مصر تقريبًا
-    # GitHub Actions يستخدم UTC
     - cron: "0 5,9,13,17 * * *"
 
+  # تشغيل يدوي من GitHub Actions
   workflow_dispatch:
 
+# السماح للـ GitHub Actions بعمل Commit و Push
 permissions:
   contents: write
 
@@ -17,32 +20,46 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. تحميل المشروع
+
+      # ==========================================
+      # 1 - تحميل ملفات المشروع
+      # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. إعداد Node.js
+      # ==========================================
+      # 2 - إعداد Node.js
+      # ==========================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      # 3. تثبيت dotenv فقط
-      # لأن المشروع الحالي لا يحتوي package.json
+      # ==========================================
+      # 3 - تثبيت المكتبات المطلوبة
+      # ==========================================
+      # المشروع يستخدم dotenv و axios
+      # ولا يوجد package.json حاليًا
       - name: Install dependencies
-        run: npm install dotenv
+        run: |
+          npm install dotenv axios
 
-      # 4. تشغيل البرنامج
+      # ==========================================
+      # 4 - تشغيل البرنامج ونشر المنشور
+      # ==========================================
       - name: Generate and Publish Facebook Post
         env:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_ACCESS_TOKEN: ${{ secrets.FACEBOOK_ACCESS_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: node index.js
+        run: |
+          node index.js
 
-      # 5. حفظ تحديثات المواضيع
+      # ==========================================
+      # 5 - حفظ تحديثات سلسلة المحتوى
+      # ==========================================
       - name: Commit topic updates
         if: always()
         run: |
@@ -51,6 +68,9 @@ jobs:
 
           git add contentSeries.js topics.txt used_topics.txt 2>/dev/null || true
 
-          git diff --cached --quiet || git commit -m "Update content series after scheduled post"
-
-          git push origin main || true
+          if git diff --cached --quiet; then
+            echo "لا توجد تغييرات لحفظها"
+          else
+            git commit -m "Update content series after Facebook post"
+            git push origin main
+          fi
