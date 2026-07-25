@@ -2,37 +2,25 @@ require("dotenv").config();
 
 const fs = require("fs");
 const { publishToFacebook } = require("./publishFacebook");
-const { getNextTopic } = require("./contentSeries");
+const { topics } = require("./contentSeries");
 
-const STATE_FILE = "./contentState.js";
+const STATE_FILE = "./contentState.json";
 
 function getCurrentIndex() {
   try {
     if (!fs.existsSync(STATE_FILE)) {
       return 0;
     }
-
-    const content = fs.readFileSync(STATE_FILE, "utf8");
-
-    const match = content.match(/currentIndex\s*=\s*(\d+)/);
-
-    if (match) {
-      return Number(match[1]);
-    }
-
-    return 0;
+    const data = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+    return Number(data.currentIndex || 0);
   } catch (error) {
     return 0;
   }
 }
 
 function saveNextIndex(nextIndex) {
-  const content = `module.exports = {
-  currentIndex: ${nextIndex}
-};
-`;
-
-  fs.writeFileSync(STATE_FILE, content, "utf8");
+  const data = { currentIndex: nextIndex };
+  fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2), "utf8");
 }
 
 async function main() {
@@ -46,7 +34,6 @@ async function main() {
   if (!pageId) {
     throw new Error("FACEBOOK_PAGE_ID غير موجود في GitHub Secrets");
   }
-
   if (!accessToken) {
     throw new Error(
       "FACEBOOK_PAGE_ACCESS_TOKEN غير موجود في GitHub Secrets"
@@ -57,14 +44,19 @@ async function main() {
   console.log("Access Token موجود ✅");
 
   const currentIndex = getCurrentIndex();
+  
+  if (currentIndex >= topics.length) {
+      console.log("تم الانتهاء من جميع المواضيع، البدء من جديد...");
+      saveNextIndex(0);
+      process.exit(0);
+  }
+
+  const topic = topics[currentIndex];
+  const nextIndex = (currentIndex + 1) % topics.length;
 
   console.log("الموضوع الحالي رقم:", currentIndex + 1);
-
-  const { topic, nextIndex } = getNextTopic();
-
   console.log("الموضوع:");
   console.log(topic.title);
-
   console.log("---------------------------------");
   console.log("جاري النشر على Facebook...");
   console.log("---------------------------------");
@@ -92,9 +84,6 @@ async function main() {
       console.error(error.message);
     }
 
-    // مهم جدًا:
-    // لو النشر فشل، لا نغير رقم الموضوع
-    // عشان يعيد المحاولة في التشغيل القادم
     process.exit(1);
   }
 }
