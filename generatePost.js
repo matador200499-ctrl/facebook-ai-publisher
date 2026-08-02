@@ -1,3 +1,0 @@
-.github/
-└── workflows/
-    └── publish.yml
