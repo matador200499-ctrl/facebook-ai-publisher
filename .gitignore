@@ -1,0 +1,10 @@
+output/
+*.mp3
+*.mp4
+*.jpg
+*.png
+*.srt
+temp/
+__pycache__/
+*.pyc
+.env
