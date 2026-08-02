@@ -1,51 +1,44 @@
-name: Facebook AI Publisher
+name: Facebook Video Publisher
 
 on:
   schedule:
-    # 4 مرات يوميًا بتوقيت UTC
-    # 10:00 صباحًا بتوقيت مصر = 08:00 UTC
-    # 02:00 ظهرًا بتوقيت مصر = 12:00 UTC
-    # 06:00 مساءً بتوقيت مصر = 16:00 UTC
-    # 10:00 مساءً بتوقيت مصر = 20:00 UTC
-    - cron: "0 8,12,16,20 * * *"
-
+    - cron: '0 5,9,13,17 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  publish:
-    name: Generate and Publish Facebook Post
+  generate-and-publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          node-version: 20
+          python-version: '3.11'
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install dependencies
-        run: npm install axios dotenv
+        run: pip install -r requirements.txt
 
-      - name: Generate and Publish Facebook Post
+      - name: Generate video and publish
+        run: python3 index.py
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
-        run: node index.js
 
-      - name: Save changes
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add contentSeries.js
-
-          git diff --cached --quiet || git commit -m "Update Facebook content rotation"
-
-          git push
+      - name: Upload video artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-video
+          path: output/video.mp4
+          retention-days: 7
