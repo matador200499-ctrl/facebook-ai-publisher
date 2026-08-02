@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Facebook Video Publisher - Generate Video from AI Script
-Pipeline: Gemini AI → Script → edge-tts Audio → Pollinations Images → FFmpeg Video
+Pipeline: Gemini AI (REST) → Script → edge-tts Audio → Pollinations Images → FFmpeg Video
 """
 
 import os
@@ -36,15 +36,10 @@ IMAGE_THEMES = [
     "leadership power",
 ]
 
-# ─── Step 1: Generate Script with Gemini AI ──────────────────────────────────
+# ─── Step 1: Generate Script with Gemini AI (REST API) ──────────────────────
 
 def generate_script(topic=None):
-    """Generate a video script using Gemini AI in Arabic"""
-    import google.generativeai as genai
-
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.5-flash")
-
+    """Generate a video script using Gemini AI via REST API"""
     if topic is None:
         topics = [
             "حكمة يومية تحفيزية",
@@ -83,12 +78,54 @@ def generate_script(topic=None):
 
 ملاحظة: اكتب بجمل بسيطة وقوية ومناسبة للنطق الصوتي. لا تستخدم رموز أو أرقام معقدة."""
 
-    response = model.generate_content(prompt)
-    text = response.text
+    # Use REST API directly
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
+    
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }],
+        "generationConfig": {
+            "temperature": 0.8,
+            "maxOutputTokens": 1000
+        }
+    }
 
-    # Parse the response
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Extract text from response
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+    except requests.exceptions.HTTPError as e:
+        print(f"❌ Gemini API error: {e}")
+        print(f"   Response: {response.text[:500]}")
+        # Fallback to default script
+        text = _get_fallback_script()
+    except Exception as e:
+        print(f"❌ Error calling Gemini: {e}")
+        text = _get_fallback_script()
+
     script = parse_script(text)
     return script
+
+
+def _get_fallback_script():
+    """Fallback script when Gemini fails"""
+    return """عنوان: سر النجاح الحقيقي
+مقدمة: هل تساءلت يوماً لماذا ينجح بعض الناس بينما يفشل الاخرون؟
+جمل:
+- النجاح ليس حظاً بل هو نتيجة عمل مستمر وتخطيط ذكي
+- كل شخص ناجح واجه صعوبات كثيرة لكنه لم يستسلم ابداً
+- الثقة بالنفس هي المفتاح الاول لتحقيق اي هدف
+- التعلم المستمر والتطوير الذاتي هما سلاحك الأقوى
+- لا تقارن نفسك بالاخرين بل قارن نفسك بامستقبلك
+خاتمة: ابدأ اليوم واتخذ خطوة واحدة نحو حلمك.
+هاشتاجات: #تحفيز #نجاح #تطوير_الذات"""
+
 
 def parse_script(text):
     """Parse the Gemini response into structured script"""
@@ -126,6 +163,7 @@ def parse_script(text):
 
     return script
 
+
 # ─── Step 2: Generate Audio with edge-tts ────────────────────────────────────
 
 async def generate_audio(text, output_path):
@@ -147,6 +185,7 @@ async def generate_audio(text, output_path):
         sf.write(srt_content)
     return srt_content
 
+
 def get_full_script_text(script):
     """Combine all script parts into full narration text"""
     parts = []
@@ -157,6 +196,7 @@ def get_full_script_text(script):
     if script.get("conclusion"):
         parts.append(script["conclusion"])
     return " ".join(parts)
+
 
 # ─── Step 3: Generate Images with Pollinations.ai ────────────────────────────
 
@@ -176,6 +216,7 @@ def generate_image(prompt, output_path, width=1280, height=720):
         print(f"❌ Error generating image: {e}")
         return False
 
+
 def generate_scene_images(script, num_scenes=5):
     """Generate images for each scene of the video"""
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -186,7 +227,6 @@ def generate_scene_images(script, num_scenes=5):
 
     for i in range(num_scenes):
         image_path = os.path.join(TEMP_DIR, f"scene_{i:02d}.jpg")
-        # Create descriptive prompt for each scene
         prompts = [
             f"{theme}, beautiful artistic, cinematic lighting, high quality",
             f"abstract art, {theme}, inspirational, warm colors",
@@ -200,6 +240,7 @@ def generate_scene_images(script, num_scenes=5):
 
     return images
 
+
 # ─── Step 4: Create Video with FFmpeg ────────────────────────────────────────
 
 def create_video(images, audio_path, script, output_path):
@@ -208,8 +249,7 @@ def create_video(images, audio_path, script, output_path):
     if num_images == 0:
         return False
 
-    # Calculate duration per image based on audio length
-    # First get audio duration
+    # Get audio duration
     duration_result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
@@ -217,7 +257,6 @@ def create_video(images, audio_path, script, output_path):
     )
     audio_duration = float(duration_result.stdout.strip())
 
-    # Each image shows for audio_duration / num_images seconds
     duration_per_image = audio_duration / num_images
 
     # Create input list for FFmpeg concat
@@ -226,7 +265,6 @@ def create_video(images, audio_path, script, output_path):
         for img in images:
             f.write(f"file '{img}'\n")
             f.write(f"duration {duration_per_image}\n")
-        # Add last image again (FFmpeg requirement)
         f.write(f"file '{images[-1]}'\n")
 
     # Create caption file (SRT format)
@@ -234,7 +272,6 @@ def create_video(images, audio_path, script, output_path):
     create_srt_captions(script, audio_duration, srt_path)
 
     # FFmpeg command: slideshow with audio + subtitles
-    # Use fade transitions between images
     cmd = [
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0",
@@ -256,14 +293,14 @@ def create_video(images, audio_path, script, output_path):
             return True
         else:
             print(f"❌ FFmpeg error: {result.stderr[-500:]}")
-            # Try simpler command without subtitles
             return create_video_simple(images, audio_path, output_path)
     except subprocess.TimeoutExpired:
         print("❌ FFmpeg timed out")
         return False
 
+
 def create_video_simple(images, audio_path, output_path):
-    """Simpler video creation without subtitles if complex version fails"""
+    """Simpler video creation without subtitles"""
     num_images = len(images)
 
     duration_result = subprocess.run(
@@ -272,17 +309,8 @@ def create_video_simple(images, audio_path, output_path):
         capture_output=True, text=True
     )
     audio_duration = float(duration_result.stdout.strip())
-    duration_per_image = audio_duration / num_images
-
-    # Simple command: loop images with crossfade
-    cmd = [
-        "ffmpeg", "-y",
-        "-framerate", "1/{}".format(int(duration_per_image)),
-        "-i", images[0] if num_images == 1 else None,
-    ]
 
     if num_images == 1:
-        # Single image for full duration
         cmd = [
             "ffmpeg", "-y",
             "-loop", "1", "-i", images[0],
@@ -297,6 +325,7 @@ def create_video_simple(images, audio_path, output_path):
     else:
         # Multiple images - create individual clips and concat
         clips = []
+        duration_per_image = audio_duration / num_images
         for i, img in enumerate(images):
             clip_path = os.path.join(TEMP_DIR, f"clip_{i:02d}.mp4")
             cmd_clip = [
@@ -311,7 +340,6 @@ def create_video_simple(images, audio_path, output_path):
             subprocess.run(cmd_clip, capture_output=True, timeout=60)
             clips.append(clip_path)
 
-        # Concat all clips
         concat_path = os.path.join(TEMP_DIR, "concat_list.txt")
         with open(concat_path, "w") as f:
             for clip in clips:
@@ -342,6 +370,7 @@ def create_video_simple(images, audio_path, output_path):
         print(f"❌ Error: {e}")
         return False
 
+
 def create_srt_captions(script, total_duration, output_path):
     """Create SRT subtitle file"""
     parts = []
@@ -353,6 +382,8 @@ def create_srt_captions(script, total_duration, output_path):
         parts.append(script["conclusion"])
 
     total_parts = len(parts)
+    if total_parts == 0:
+        return
     duration_per_part = total_duration / total_parts
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -365,6 +396,7 @@ def create_srt_captions(script, total_duration, output_path):
             f.write(f"{start_fmt} --> {end_fmt}\n")
             f.write(f"{part}\n\n")
 
+
 def format_time(seconds):
     """Format seconds to SRT time format"""
     h = int(seconds // 3600)
@@ -372,6 +404,7 @@ def format_time(seconds):
     s = int(seconds % 60)
     ms = int((seconds % 1) * 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
 
 # ─── Step 5: Generate Facebook Post Text ─────────────────────────────────────
 
@@ -384,7 +417,7 @@ def generate_facebook_post(script):
     if script.get("intro"):
         post_text += f"{script['intro']}\n\n"
     if script.get("sentences"):
-        for s in script["sentences"][:3]:  # Show first 3 sentences
+        for s in script["sentences"][:3]:
             post_text += f"✨ {s}\n"
         post_text += "\n"
     if script.get("conclusion"):
@@ -392,6 +425,7 @@ def generate_facebook_post(script):
     post_text += f"\n{hashtags}\n"
 
     return post_text
+
 
 # ─── Main Pipeline ───────────────────────────────────────────────────────────
 
@@ -425,7 +459,7 @@ async def main():
 
     # Step 3: Generate images
     print("\n🖼️ الخطوة 3: توليد الصور...")
-    num_scenes = max(len(script["sentences"]) + 2, 4)  # +2 for intro and conclusion
+    num_scenes = max(len(script["sentences"]) + 2, 4)
     images = generate_scene_images(script, num_scenes)
     print(f"   تم توليد {len(images)} صورة")
 
@@ -461,6 +495,7 @@ async def main():
     print("=" * 60)
 
     return output
+
 
 if __name__ == "__main__":
     result = asyncio.run(main())
