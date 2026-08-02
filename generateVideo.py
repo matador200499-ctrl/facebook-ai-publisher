@@ -56,7 +56,7 @@ def generate_script(topic=None):
             "نصيحة للتطوير الذاتي",
             "عظمة الخالق في الطبيعة",
         ]
-        topic = topics[time.time() % len(topics)]
+        topic = topics[int(time.time()) % len(topics)]
 
     prompt = f"""أنت كاتب سكربتات فيديو احترافي. اكتب سكربت فيديو قصير (دقيقة واحدة) باللغة العربية الفصحى عن الموضوع التالي:
 
