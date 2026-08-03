@@ -78,39 +78,55 @@ def generate_script(topic=None):
 
 ملاحظة: اكتب بجمل بسيطة وقوية ومناسبة للنطق الصوتي. لا تستخدم رموز أو أرقام معقدة."""
 
-    # Use REST API directly
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
-    
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }],
-        "generationConfig": {
-            "temperature": 0.8,
-            "maxOutputTokens": 1000
-        }
-    }
+    # Try multiple Gemini models
+    models = [
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+    ]
 
-    headers = {"Content-Type": "application/json"}
-
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=60)
-        response.raise_for_status()
-        data = response.json()
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
         
-        # Extract text from response
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-    except requests.exceptions.HTTPError as e:
-        print(f"❌ Gemini API error: {e}")
-        print(f"   Response: {response.text[:500]}")
-        # Fallback to default script
-        text = _get_fallback_script()
-    except Exception as e:
-        print(f"❌ Error calling Gemini: {e}")
-        text = _get_fallback_script()
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }],
+            "generationConfig": {
+                "temperature": 0.8,
+                "maxOutputTokens": 1000
+            }
+        }
 
-    script = parse_script(text)
-    return script
+        headers = {"Content-Type": "application/json"}
+
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=60)
+            if response.status_code == 200:
+                data = response.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                print(f"   ✅ تم استخدام نموذج: {model}")
+                script = parse_script(text)
+                if script["title"]:
+                    return script
+                print(f"   ⚠️ النموذج {model} لم يرجع عنوان - نجرب التالي")
+            elif response.status_code == 429 or response.status_code == 503:
+                print(f"   ⚠️ {model}: غير متاح حالياً ({response.status_code})")
+                time.sleep(2)
+                continue
+            elif response.status_code == 404:
+                print(f"   ⚠️ {model}: غير متوفر")
+                continue
+            else:
+                print(f"   ⚠️ {model}: خطأ {response.status_code}")
+                continue
+        except Exception as e:
+            print(f"   ⚠️ {model}: خطأ {e}")
+            continue
+
+    # Fallback to default script
+    print("   ⚠️ جاري استخدام سكربت احتياطي...")
+    return parse_script(_get_fallback_script())
 
 
 def _get_fallback_script():
@@ -121,9 +137,9 @@ def _get_fallback_script():
 - النجاح ليس حظاً بل هو نتيجة عمل مستمر وتخطيط ذكي
 - كل شخص ناجح واجه صعوبات كثيرة لكنه لم يستسلم ابداً
 - الثقة بالنفس هي المفتاح الاول لتحقيق اي هدف
-- التعلم المستمر والتطوير الذاتي هما سلاحك الأقوى
+- التعلم المستمر والتطوير الذاتي هما سلاحك الاقوى
 - لا تقارن نفسك بالاخرين بل قارن نفسك بامستقبلك
-خاتمة: ابدأ اليوم واتخذ خطوة واحدة نحو حلمك.
+خاتمة: ابدا اليوم واتخذ خطوة واحدة نحو حلمك.
 هاشتاجات: #تحفيز #نجاح #تطوير_الذات"""
 
 
@@ -138,12 +154,12 @@ def parse_script(text):
     }
 
     # Extract title
-    title_match = re.search(r'عنوان[:：]\s*(.+)', text)
+    title_match = re.search(r'عنوان[:\uff1a]\s*(.+)', text)
     if title_match:
         script["title"] = title_match.group(1).strip()
 
     # Extract intro
-    intro_match = re.search(r'مقدمة[:：]\s*(.+)', text)
+    intro_match = re.search(r'مقدمة[:\uff1a]\s*(.+)', text)
     if intro_match:
         script["intro"] = intro_match.group(1).strip()
 
@@ -152,12 +168,12 @@ def parse_script(text):
     script["sentences"] = [s.strip() for s in sentences if s.strip()]
 
     # Extract conclusion
-    conclusion_match = re.search(r'خاتمة[:：]\s*(.+)', text)
+    conclusion_match = re.search(r'خاتمة[:\uff1a]\s*(.+)', text)
     if conclusion_match:
         script["conclusion"] = conclusion_match.group(1).strip()
 
     # Extract hashtags
-    hashtag_match = re.search(r'هاشتاجات[:：]\s*(.+)', text)
+    hashtag_match = re.search(r'هاشتاجات[:\uff1a]\s*(.+)', text)
     if hashtag_match:
         script["hashtags"] = hashtag_match.group(1).strip()
 
@@ -257,59 +273,7 @@ def create_video(images, audio_path, script, output_path):
     )
     audio_duration = float(duration_result.stdout.strip())
 
-    duration_per_image = audio_duration / num_images
-
-    # Create input list for FFmpeg concat
-    input_list_path = os.path.join(TEMP_DIR, "input_list.txt")
-    with open(input_list_path, "w") as f:
-        for img in images:
-            f.write(f"file '{img}'\n")
-            f.write(f"duration {duration_per_image}\n")
-        f.write(f"file '{images[-1]}'\n")
-
-    # Create caption file (SRT format)
-    srt_path = os.path.join(TEMP_DIR, "captions.srt")
-    create_srt_captions(script, audio_duration, srt_path)
-
-    # FFmpeg command: slideshow with audio + subtitles
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", input_list_path,
-        "-i", audio_path,
-        "-vf", f"scale=1280:720,format=yuv420p,subtitles={srt_path}:force_style='FontName=Arial,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,MarginV=50'",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "128k",
-        "-shortest",
-        "-pix_fmt", "yuv420p",
-        output_path
-    ]
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        if result.returncode == 0:
-            print(f"✅ Video created: {output_path}")
-            print(f"   Size: {os.path.getsize(output_path) / (1024*1024):.1f} MB")
-            return True
-        else:
-            print(f"❌ FFmpeg error: {result.stderr[-500:]}")
-            return create_video_simple(images, audio_path, output_path)
-    except subprocess.TimeoutExpired:
-        print("❌ FFmpeg timed out")
-        return False
-
-
-def create_video_simple(images, audio_path, output_path):
-    """Simpler video creation without subtitles"""
-    num_images = len(images)
-
-    duration_result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
-        capture_output=True, text=True
-    )
-    audio_duration = float(duration_result.stdout.strip())
-
+    # Simple approach: single image slideshow
     if num_images == 1:
         cmd = [
             "ffmpeg", "-y",
@@ -323,23 +287,26 @@ def create_video_simple(images, audio_path, output_path):
             output_path
         ]
     else:
-        # Multiple images - create individual clips and concat
-        clips = []
+        # Create clips for each image
         duration_per_image = audio_duration / num_images
+        clips = []
+        
         for i, img in enumerate(images):
             clip_path = os.path.join(TEMP_DIR, f"clip_{i:02d}.mp4")
             cmd_clip = [
                 "ffmpeg", "-y",
                 "-loop", "1", "-i", img,
-                "-vf", f"scale=1280:720,format=yuv420p,zoompan=z='min(zoom+0.001,1.3)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={int(duration_per_image*30)}:s=1280x720:fps=30",
+                "-vf", f"scale=1280:720,format=yuv420p",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                 "-t", str(duration_per_image),
                 "-pix_fmt", "yuv420p",
                 clip_path
             ]
-            subprocess.run(cmd_clip, capture_output=True, timeout=60)
-            clips.append(clip_path)
+            result = subprocess.run(cmd_clip, capture_output=True, text=True, timeout=60)
+            if result.returncode == 0:
+                clips.append(clip_path)
 
+        # Concat clips with audio
         concat_path = os.path.join(TEMP_DIR, "concat_list.txt")
         with open(concat_path, "w") as f:
             for clip in clips:
@@ -360,50 +327,18 @@ def create_video_simple(images, audio_path, output_path):
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if result.returncode == 0:
-            print(f"✅ Video created (simple): {output_path}")
+            print(f"✅ Video created: {output_path}")
             print(f"   Size: {os.path.getsize(output_path) / (1024*1024):.1f} MB")
             return True
         else:
-            print(f"❌ Error: {result.stderr[-300:]}")
+            print(f"❌ FFmpeg error: {result.stderr[-500:]}")
             return False
+    except subprocess.TimeoutExpired:
+        print("❌ FFmpeg timed out")
+        return False
     except Exception as e:
         print(f"❌ Error: {e}")
         return False
-
-
-def create_srt_captions(script, total_duration, output_path):
-    """Create SRT subtitle file"""
-    parts = []
-    if script.get("intro"):
-        parts.append(script["intro"])
-    for sentence in script.get("sentences", []):
-        parts.append(sentence)
-    if script.get("conclusion"):
-        parts.append(script["conclusion"])
-
-    total_parts = len(parts)
-    if total_parts == 0:
-        return
-    duration_per_part = total_duration / total_parts
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        for i, part in enumerate(parts):
-            start = i * duration_per_part
-            end = (i + 1) * duration_per_part
-            start_fmt = format_time(start)
-            end_fmt = format_time(end)
-            f.write(f"{i + 1}\n")
-            f.write(f"{start_fmt} --> {end_fmt}\n")
-            f.write(f"{part}\n\n")
-
-
-def format_time(seconds):
-    """Format seconds to SRT time format"""
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int((seconds % 1) * 1000)
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 # ─── Step 5: Generate Facebook Post Text ─────────────────────────────────────
@@ -470,7 +405,7 @@ async def main():
 
     if not success:
         print("❌ فشل إنشاء الفيديو")
-        sys.exit(1)
+        return None
 
     # Step 5: Generate post text
     post_text = generate_facebook_post(script)
