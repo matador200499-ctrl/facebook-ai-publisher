@@ -87,7 +87,7 @@ def generate_script(topic=None):
 
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-        
+
         payload = {
             "contents": [{
                 "parts": [{"text": prompt}]
@@ -214,27 +214,101 @@ def get_full_script_text(script):
     return " ".join(parts)
 
 
-# ─── Step 3: Generate Images with Pollinations.ai ────────────────────────────
+# ─── Step 3: Generate Images with Pollinations.ai (with retry + local fallback) ──
 
-def generate_image(prompt, output_path, width=1280, height=720):
-    """Generate an image using Pollinations.ai (free, no API key needed)"""
+# Minimum size (bytes) for a downloaded file to be considered a valid image.
+# Pollinations sometimes returns a tiny error payload with a 200 status too,
+# so we check both the HTTP status AND the actual file size.
+MIN_VALID_IMAGE_BYTES = 5000
+
+# Alternate image sources / seeds to retry with, in order.
+POLLINATIONS_MODELS = ["flux", "turbo"]  # pollinations model param, if available
+
+
+def _download_pollinations_image(prompt, output_path, width, height, seed, model=None):
+    """Single attempt to download one image from Pollinations.ai.
+    Returns True only if the request succeeded AND the file looks like a real image."""
     encoded_prompt = requests.utils.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&seed={int(time.time())}"
+    url = (
+        f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+        f"?width={width}&height={height}&nologo=true&seed={seed}"
+    )
+    if model:
+        url += f"&model={model}"
 
     try:
         response = requests.get(url, timeout=60)
         response.raise_for_status()
+        if len(response.content) < MIN_VALID_IMAGE_BYTES:
+            print(f"   ⚠️ الصورة صغيرة جداً/فاسدة ({len(response.content)} بايت) - نعتبرها فشل")
+            return False
         with open(output_path, "wb") as f:
             f.write(response.content)
-        print(f"✅ Image saved: {output_path}")
         return True
     except Exception as e:
-        print(f"❌ Error generating image: {e}")
+        print(f"   ⚠️ فشل تحميل الصورة: {e}")
         return False
 
 
+def _make_local_placeholder_image(output_path, text, width=1280, height=720):
+    """Last-resort fallback: generate a simple solid-color placeholder image locally
+    using Pillow, so the pipeline can still produce a video even if Pollinations
+    is completely down. Requires Pillow (pip install Pillow)."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        import random
+
+        colors = [(30, 30, 60), (20, 50, 70), (50, 30, 60), (25, 45, 35), (55, 40, 20)]
+        bg = random.choice(colors)
+        img = Image.new("RGB", (width, height), color=bg)
+        draw = ImageDraw.Draw(img)
+
+        try:
+            font = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48
+            )
+        except Exception:
+            font = ImageFont.load_default()
+
+        # Simple centered watermark-style text so scenes aren't just blank
+        label = text[:20] if text else "..."
+        try:
+            bbox = draw.textbbox((0, 0), label, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except Exception:
+            tw, th = (len(label) * 20, 40)
+        draw.text(((width - tw) / 2, (height - th) / 2), label, fill=(230, 230, 230), font=font)
+
+        img.save(output_path, "JPEG", quality=85)
+        return True
+    except Exception as e:
+        print(f"   ❌ فشل حتى إنشاء صورة احتياطية محلية: {e}")
+        return False
+
+
+def generate_image(prompt, output_path, width=1280, height=720, max_retries=3):
+    """Generate an image using Pollinations.ai (free, no API key needed),
+    with retries and a random seed each attempt so a repeated 500 doesn't
+    hit the exact same broken request."""
+    for attempt in range(1, max_retries + 1):
+        seed = int(time.time() * 1000) % 1000000 + attempt
+        ok = _download_pollinations_image(prompt, output_path, width, height, seed)
+        if ok:
+            print(f"✅ Image saved: {output_path} (attempt {attempt})")
+            return True
+        if attempt < max_retries:
+            wait = attempt * 3
+            print(f"   ⏳ إعادة محاولة توليد الصورة خلال {wait} ثانية... (محاولة {attempt + 1}/{max_retries})")
+            time.sleep(wait)
+
+    print(f"❌ فشلت كل محاولات Pollinations لهذه الصورة، هنستخدم صورة احتياطية محلية")
+    return _make_local_placeholder_image(output_path, prompt)
+
+
 def generate_scene_images(script, num_scenes=5):
-    """Generate images for each scene of the video"""
+    """Generate images for each scene of the video.
+    Only paths that actually exist on disk (real download or local fallback)
+    are returned, so downstream FFmpeg never receives a missing file."""
     os.makedirs(TEMP_DIR, exist_ok=True)
     images = []
 
@@ -251,8 +325,19 @@ def generate_scene_images(script, num_scenes=5):
             f"creative visual, {theme}, modern digital art",
         ]
         prompt = prompts[i % len(prompts)]
-        generate_image(prompt, image_path)
-        images.append(image_path)
+        success = generate_image(prompt, image_path)
+
+        # Only add the path if the file genuinely exists now (download or placeholder)
+        if success and os.path.exists(image_path) and os.path.getsize(image_path) > 0:
+            images.append(image_path)
+        else:
+            print(f"   ⚠️ تخطي المشهد {i} - لا توجد صورة صالحة")
+
+    if not images:
+        raise RuntimeError(
+            "فشل توليد كل الصور (Pollinations + الاحتياطي المحلي)، "
+            "لا يمكن إنشاء فيديو بدون صور. تحقق من اتصال الشبكة أو من تثبيت مكتبة Pillow."
+        )
 
     return images
 
@@ -290,7 +375,7 @@ def create_video(images, audio_path, script, output_path):
         # Create clips for each image
         duration_per_image = audio_duration / num_images
         clips = []
-        
+
         for i, img in enumerate(images):
             clip_path = os.path.join(TEMP_DIR, f"clip_{i:02d}.mp4")
             cmd_clip = [
@@ -305,6 +390,12 @@ def create_video(images, audio_path, script, output_path):
             result = subprocess.run(cmd_clip, capture_output=True, text=True, timeout=60)
             if result.returncode == 0:
                 clips.append(clip_path)
+            else:
+                print(f"   ⚠️ فشل بناء clip للصورة {img}: {result.stderr[-300:]}")
+
+        if not clips:
+            print("❌ لم ينجح بناء أي clip من الصور")
+            return False
 
         # Concat clips with audio
         concat_path = os.path.join(TEMP_DIR, "concat_list.txt")
@@ -395,8 +486,12 @@ async def main():
     # Step 3: Generate images
     print("\n🖼️ الخطوة 3: توليد الصور...")
     num_scenes = max(len(script["sentences"]) + 2, 4)
-    images = generate_scene_images(script, num_scenes)
-    print(f"   تم توليد {len(images)} صورة")
+    try:
+        images = generate_scene_images(script, num_scenes)
+    except RuntimeError as e:
+        print(f"❌ {e}")
+        return None
+    print(f"   تم توليد {len(images)} صورة صالحة من أصل {num_scenes}")
 
     # Step 4: Create video
     print("\n🎥 الخطوة 4: إنشاء الفيديو...")
