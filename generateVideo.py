@@ -250,10 +250,30 @@ def _download_pollinations_image(prompt, output_path, width, height, seed, model
         return False
 
 
+def _download_picsum_image(output_path, width, height):
+    """Second-tier fallback: fetch a random real photo from Lorem Picsum.
+    No API key needed, doesn't depend on prompt matching, but is far more
+    visually usable than a flat placeholder if Pollinations is completely down."""
+    seed = int(time.time() * 1000) % 1000000
+    url = f"https://picsum.photos/seed/{seed}/{width}/{height}"
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        if len(response.content) < MIN_VALID_IMAGE_BYTES:
+            return False
+        with open(output_path, "wb") as f:
+            f.write(response.content)
+        print(f"   🖼️ استُخدمت صورة احتياطية من Picsum بدلاً من Pollinations")
+        return True
+    except Exception as e:
+        print(f"   ⚠️ فشل تحميل الصورة الاحتياطية من Picsum: {e}")
+        return False
+
+
 def _make_local_placeholder_image(output_path, text, width=1280, height=720):
     """Last-resort fallback: generate a simple solid-color placeholder image locally
     using Pillow, so the pipeline can still produce a video even if Pollinations
-    is completely down. Requires Pillow (pip install Pillow)."""
+    AND Picsum are both down. Requires Pillow (pip install Pillow)."""
     try:
         from PIL import Image, ImageDraw, ImageFont
         import random
@@ -301,7 +321,11 @@ def generate_image(prompt, output_path, width=1280, height=720, max_retries=3):
             print(f"   ⏳ إعادة محاولة توليد الصورة خلال {wait} ثانية... (محاولة {attempt + 1}/{max_retries})")
             time.sleep(wait)
 
-    print(f"❌ فشلت كل محاولات Pollinations لهذه الصورة، هنستخدم صورة احتياطية محلية")
+    print(f"❌ فشلت كل محاولات Pollinations لهذه الصورة، هنجرب مصدر بديل (Picsum)")
+    if _download_picsum_image(output_path, width, height):
+        return True
+
+    print(f"   ❌ فشل Picsum أيضاً، هنستخدم صورة احتياطية محلية كملاذ أخير")
     return _make_local_placeholder_image(output_path, prompt)
 
 
