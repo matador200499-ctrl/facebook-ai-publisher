@@ -80,9 +80,9 @@ def generate_script(topic=None):
 
     # Try multiple Gemini models
     models = [
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
+        "gemini-1.5-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash",
     ]
 
     for model in models:
