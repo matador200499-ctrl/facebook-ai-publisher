@@ -331,35 +331,56 @@ def generate_image(prompt, output_path, width=1280, height=720, max_retries=3):
 
 def generate_scene_images(script, num_scenes=5):
     """Generate images for each scene of the video.
-    Only paths that actually exist on disk (real download or local fallback)
-    are returned, so downstream FFmpeg never receives a missing file."""
+    Tries Kaggle GPU (Stable Diffusion, higher quality + more reliable) first
+    if configured; falls back to the Pollinations -> Picsum -> local
+    placeholder chain per-scene for anything Kaggle didn't produce.
+    Only paths that actually exist on disk are returned, so downstream
+    FFmpeg never receives a missing file."""
     os.makedirs(TEMP_DIR, exist_ok=True)
-    images = []
+    images = [None] * num_scenes
 
     # Get a random theme
     theme = IMAGE_THEMES[int(time.time()) % len(IMAGE_THEMES)]
 
+    prompts = []
     for i in range(num_scenes):
-        image_path = os.path.join(TEMP_DIR, f"scene_{i:02d}.jpg")
-        prompts = [
+        prompt_options = [
             f"{theme}, beautiful artistic, cinematic lighting, high quality",
             f"abstract art, {theme}, inspirational, warm colors",
             f"epic landscape, {theme}, dramatic lighting, 4k quality",
             f"artistic illustration, {theme}, professional design",
             f"creative visual, {theme}, modern digital art",
         ]
-        prompt = prompts[i % len(prompts)]
-        success = generate_image(prompt, image_path)
+        prompts.append(prompt_options[i % len(prompt_options)])
 
-        # Only add the path if the file genuinely exists now (download or placeholder)
+    try:
+        from kaggle_client import generate_images_via_kaggle
+        kaggle_images = generate_images_via_kaggle(prompts, TEMP_DIR)
+    except Exception as e:
+        print(f"⚠️ تخطي Kaggle بسبب خطأ غير متوقع: {e}")
+        kaggle_images = None
+
+    if kaggle_images:
+        for i, path in enumerate(kaggle_images):
+            if i < num_scenes:
+                images[i] = path
+        print(f"✅ Kaggle ولّد {len(kaggle_images)}/{num_scenes} صورة")
+
+    for i in range(num_scenes):
+        if images[i] is not None:
+            continue
+        image_path = os.path.join(TEMP_DIR, f"scene_{i:02d}.jpg")
+        success = generate_image(prompts[i], image_path)
         if success and os.path.exists(image_path) and os.path.getsize(image_path) > 0:
-            images.append(image_path)
+            images[i] = image_path
         else:
             print(f"   ⚠️ تخطي المشهد {i} - لا توجد صورة صالحة")
 
+    images = [p for p in images if p is not None]
+
     if not images:
         raise RuntimeError(
-            "فشل توليد كل الصور (Pollinations + الاحتياطي المحلي)، "
+            "فشل توليد كل الصور (Kaggle + Pollinations + الاحتياطي المحلي)، "
             "لا يمكن إنشاء فيديو بدون صور. تحقق من اتصال الشبكة أو من تثبيت مكتبة Pillow."
         )
 

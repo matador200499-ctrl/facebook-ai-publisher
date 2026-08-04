@@ -1,0 +1,14 @@
+{
+  "id": "__KAGGLE_USERNAME__/fb-ai-publisher-image-gen",
+  "title": "fb-ai-publisher-image-gen",
+  "code_file": "generate_images.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}
