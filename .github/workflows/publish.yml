@@ -1,40 +1,31 @@
 name: Facebook Video Publisher
-
 on:
   schedule:
     - cron: '0 5,9,13,17 * * *'
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   generate-and-publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Generate video and publish
         run: python3 index.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
-
       - name: Upload video artifact
         if: always()
         uses: actions/upload-artifact@v4
