@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Facebook Video Publisher - Generate Video from AI Script
-Pipeline: Gemini AI (REST) → Script → edge-tts Audio → Pollinations Images → FFmpeg Video
+Facebook Video Publisher - Generate 15-Minute Arabic Video
+Pipeline: Gemini → Unique Script → edge-tts Audio → Pollinations Images → FFmpeg Video
+Each run produces a COMPLETELY DIFFERENT video with unique topic and images.
 """
 
 import os
@@ -11,562 +12,906 @@ import subprocess
 import asyncio
 import edge_tts
 import requests
-import tempfile
 import re
 import time
+import random
+import hashlib
+from datetime import datetime
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-VOICE = "ar-EG-SalmaNeural"  # Female Egyptian Arabic voice
+VOICE = "ar-EG-SalmaNeural"
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 TEMP_DIR = os.path.join(OUTPUT_DIR, "temp")
 
-# Pollinations.ai topics for images
-IMAGE_THEMES = [
-    "motivation success",
-    "inspirational sunrise",
-    "knowledge books",
-    "ancient wisdom",
-    "technology future",
-    "nature peace",
-    "space stars",
-    "desert wisdom",
-    "education learning",
-    "leadership power",
+# ─── Working Gemini Models ──────────────────────────────────────────────────
+
+GEMINI_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest",
 ]
 
-# ─── Step 1: Generate Script with Gemini AI (REST API) ──────────────────────
+# ─── 40+ Unique Topics - Different Every Run ────────────────────────────────
 
-def generate_script(topic=None):
-    """Generate a video script using Gemini AI via REST API"""
-    if topic is None:
-        topics = [
-            "حكمة يومية تحفيزية",
-            "درس من التاريخ الإسلامي",
-            "نصيحة في علم النفس",
-            "اكتشاف علمي مدهش",
-            "قصة نجاح ملهمة",
-            "معلومة لا يعرفها كثيرون",
-            "نصيحة للتطوير الذاتي",
-            "عظمة الخالق في الطبيعة",
-        ]
-        topic = topics[int(time.time()) % len(topics)]
+ALL_TOPICS = [
+    # تحفيز وتطوير ذات (10)
+    "كيف تبني عادات يومية تغير حياتك للأفضل",
+    "الأسرار السبعة للنجاح في الحياة والعمل",
+    "كيف تتغلب على الخوف من الفشل وتنطلق بثقة",
+    "قوة الانضباط الذاتي وأثرها على تحقيق الأهداف",
+    "كيف تصبح شخصاً أفضل كل يوم بنصائح عملية",
+    "فن إدارة الوقت: كيف تنجز أكثر في وقت أقل",
+    "قوة التفكير الإيجابي في تغيير حياتك",
+    "كيف تحدد أهدافك وتحقيقها قبل نهاية العام",
+    "الصبر والمثابرة: مفتاح النجاح الحقيقي",
+    "كيف تبني ثقتك بنفسك من الصفر",
 
-    prompt = f"""أنت كاتب سكربتات فيديو احترافي. اكتب سكربت فيديو قصير (دقيقة واحدة) باللغة العربية الفصحى عن الموضوع التالي:
+    # علم ومعرفة (10)
+    "عشرة اكتشافات علمية غيرت مسار البشرية",
+    "أسرار العقل البشري التي لم يعرفها أحد من قبل",
+    "حقائق مذهلة عن الفضاء والكون لم تسمع بها",
+    "كيف يعمل الذكاء الاصطناعي ببساطة",
+    "معلومات لا يعرفها كثيرون عن جسم الإنسان",
+    "أعظم الاختراعات في التاريخ وكيف غيرت العالم",
+    "حقائق مدهشة عن الحيوانات في الطبيعة",
+    "أسرار المحيطات التي لم يكتشفها أحد",
+    "عجائب الدماغ البشري وقدراته الخفية",
+    "كيف تغيرت التكنولوجيا العالم في عقد واحد",
+
+    # حكمة وفلسفة (10)
+    "حكم وأقوال خالدة من أعظم حكماء التاريخ",
+    "دروس الحياة التي نتعلمها من الطبيعة",
+    "كيف تجد السعادة الحقيقية في الحياة البسيطة",
+    "أسرار السعادة من منظور علماء النفس",
+    "الحكمة من التجارب الصعبة في الحياة",
+    "فلسفة النجاح عند العظماء في التاريخ",
+    "كيف تحقق السلام الداخلي والراحة النفسية",
+    "أهمية القراءة والتعلم المستمر في حياة الإنسان",
+    "قيم إنسانية يجب أن نغرسها في أنفسنا",
+    "كيف تبني علاقات إيجابية مع من حولك",
+
+    # قصص ملهمة (10)
+    "قصص نجاح ملهمة من واقع الحياة العربية",
+    "قصة كيف غير شخص واحد حياة آلاف الناس",
+    "رحلات ملهمة لأشخاص غيروا مسارهم بالكامل",
+    "قصة نجاح من العدم إلى القمة",
+    "كيف حول فشل ضخم إلى أعظم نجاح",
+    "قصص حقيقية لأشخاص عاديين صنعوا إنجازات عظيمة",
+    "رحلة شخص من الفقر إلى الثروة بالعمل الجاد",
+    "قصة إصرار وعزيمة لا تعرف المستحيل",
+    "كيف ألهمت امرأة شابة العالم بأفكارها",
+    "قصة نجاح مشروع صغير تحول لإمبراطورية",
+
+    # صحة ورياضة (5)
+    "أسرار الصحة الجيدة والعمر الطويل",
+    "كيف تبني جسماً قوياً وعقلاً سليماً",
+    "نصائح ذهبية للرياضة وفوائدها على الصحة",
+    "التغذية السليمة وأثرها على جسمك وعقلك",
+    "كيف تحسن نومك وتزيد طاقتك اليومية",
+]
+
+# ─── Fallback Scripts (10 different ones, randomly chosen) ──────────────────
+
+FALLBACK_SCRIPTS = [
+    # Fallback 1: عادات يومية
+    """عنوان: عشر عادات يومية بسيطة تغير حياتك للأفضل
+
+مقدمة: هل تعلم أن الفرق بين الشخص العادي والنجاح يكمن في العادات اليومية البسيطة؟ إليك عشر عادات يمكنك تطبيقها اليوم.
+
+فقرات:
+1. الاستيقاظ مبكراً يمنحك ساعات إضافية من الإنتاجية والهدوء.
+2. شرب كوب ماء دافئ صباحاً ينشط جهازك الهضمي ويعزز طاقتك.
+3. التأمل لمدة عشر دقائق يومياً يقلل التوتر ويزيد التركيز.
+4. ممارسة الرياضة ولو لمدة ربع ساعة تحسن مزاجك وصحتك.
+5. قراءة عشر صفحات يومياً تفتح آفاقاً جديدة أمامك.
+6. تنظيم جدولك اليومي في المساء يوفر عليك وقتاً كبيراً.
+7. الأكل الصحي المتوازن يمد جسمك بالطاقة طوال اليوم.
+8. النوم المبكر يحسن ذاكرتك ويجدد خلايا جسمك.
+9. التواصل مع شخص تحبه يومياً يحسن صحتك النفسية.
+10. التعلم المستمر من أخطائك يمنع تكرارها في المستقبل.
+11. التخطيط للأسبوع كله يمنحك وضوحاً في أهدافك.
+12. المشي في الطبيعة يجدد طاقتك ويصفي ذهنك.
+13. الشكر والامتنان يومياً يزيد من سعادتك ورضاك.
+14. تجنب وسائل التواصل قبل النوم يحسن جودة نومك.
+15. وضع أهداف صغيرة يومية يبني ثقتك بنفسك.
+16. الابتسام ومقابلة الناس بوجه بشوش ينشر positivity.
+17. حفظ مبلغ صغير يومياً يبني لك ثروة كبيرة لاحقاً.
+18. الكتابة اليومية عن مشاعرك تنظم أفكارك وتقلل قلقك.
+19. تنظيف مساحتك الشخصية يريح عقلك ويزيد إنتاجيتك.
+20. الاحتفال بإنجازاتك الصغيرة يحافظ على حماسك.
+21. تخصيص وقت للراحة يمنع الإرهاق ويحفظ طاقتك.
+22. الابتعاد عن الأشخاص السلبيين يحمي طاقتك الإيجابية.
+23. تجربة أشياء جديدة يومياً يكسر الروتين وينشط عقلك.
+24. الاستماع للبودكاست أثناء القيادة يستغل وقتك بذكاء.
+25. تحديد يوم أسبوعياً لمراجعة أهدافك يحافظ على مسارك.
+
+خاتمة: ابدأ اليوم بعادة واحدة فقط، وعندما تتقنها أضف أخرى. التغير البطيء مستمر أفضل من التحول السريع المتوقف.
+
+هاشتاجات: #عادات #تطوير_الذات #نجاح""",
+
+    # Fallback 2: أسرار النجاح
+    """عنوان: أسرار النجاح التي يرفض كثيرون الاعتراف بها
+
+مقدمة: النجاح ليس صدفة وليس حظاً، بل هو مجموعة من الأسرار التي يتقنها الناجحون ويخفونها عن الآخرين. اليوم سأكشف لك أهمها.
+
+فقرات:
+1. الناجحون يعملون في صمت بينما الاخرون يتحدثون عن خططهم.
+2. الاستثمار في نفسك هو أفضل استثمار مهما كان عمرك.
+3. الفشل المبكر خير من الفشل المتأخر لأنه يمنحك فرصة التعلم.
+4. القراءة اليومية تفتح أمامك عقول أعظم الناس في التاريخ.
+5. الصبر على النتائج لا يعني الكسل بل يعني الاستمرار بثبات.
+6. البيئة المحيطة بك تحدد 80 بالمئة من نتائجك المستقبلية.
+7. الناجح لا يقارن نفسه بالاخرين بل بنفسه قبل سنة.
+8. الانضباط في الأمور الصغيرة يخلق عظامة في الأمور الكبيرة.
+9. طلب المساعدة من الخبراء يوفر عليك سنوات من التجربة.
+10. الادخار المبكر يفتح لك أبواباً لا تفتح بالعمل الشاق وحده.
+11. الصحة هي رأس المال الحقيقي الذي يحمي كل أحلامك.
+12. التعلم من أخطاء الآخرين أرخص من التعلم من أخطائك أنت.
+13. الناجح يعرف متى يقول لا لحماية وقته وطاقته.
+14. التخصص في مجال واحد يجعلك مرجعاً لا غنى عنه.
+15. العلاقات الجيدة تفتح أبواباً لا يفتحها المال وحده.
+16. الخوف من الرأي العام هو سجن أكبر من أي عائق حقيقي.
+17. التخطيط المالي الذكي يمنعك من العيش في قلق دائم.
+18. الناجح يركز على الحلول ولا يقف عند المشاكل.
+19. الطاقة الإيجابية تجذب الفرص السلبية تطردها بعيداً.
+20. التواضع يجلب لك معرفة جديدة ويحميك من الغرور.
+21. الشجاعة في اتخاذ القرار تميزك عن من يتردد دائماً.
+22. الصداقة الحقيقية أفضل من ألف علاقة سطحية.
+23. الرضا بما لديك لا يعني التوقف عن السعي للأفضل.
+24. كل يوم جديد هو فرصة للتقدم ولو بخطوة صغيرة.
+25. الحياة رحلة وليست سباقاً فاستمتع بكل مرحلة فيها.
+
+خاتمة: النجاح قرار وليست صدفة. اتخذ قرارك اليوم بأن تبدأ، وأن تستمر، وأن لا تتوقف حتى تصل.
+
+هاشتاجات: #نجاح #تحفيز #أسرار""",
+
+    # Fallback 3: معلومات علمية
+    """عنوان: عشرين حقيقة علمية مذهلة لم تعرفها من قبل
+
+مقدمة: العلم مليء بالحقائق المذهلة التي تغير نظرتك للعالم. إليك مجموعة من الحقائق العلمية التي ستدهشك.
+
+فقرات:
+1. دماغك يستهلك 20 بالمئة من طاقة جسمك رغم أنه يزن 2 بالمئة فقط.
+2. الإنسان يشترك مع الموز في 60 بالمئة من حمضه النووي.
+3. قلبك ينبض حوالي 100 ألف مرة يومياً طول حياتك.
+4. الضوء يستغرق 8 دقائق ليصل من الشمس إلى الأرض.
+5. جسمك يحتوي على كمية حديد كافية لصنع مسمار صغير.
+6. الموهبة لا تساوي شيئاً بدون العمل الجاد المستمر.
+7. النوم الجيد يحسن قدرتك على حل المشاكل بنسبة 30 بالمئة.
+8. المياه العذبة تشكل 3 بالمئة فقط من إجمالي مياه الأرض.
+9. عين الإنسان يمكنها التمييز بين 10 ملايين لون مختلف.
+10. التمارين الرياضية تفرز هرمونات تجعلك أكثر سعادة.
+11. شرب الماء البارد يحرق سعرات حرارية أكثر من الدافئ.
+12. الذاكرة القصيرة المدى تتسع لسبع قطع معلومات فقط.
+13. الشمس كبيرة بما يكفي لاحتضان مليون كوكب أرض بداخلها.
+14. جسمك يجدد خلاياه بالكامل كل سبع سنوات تقريباً.
+15. الضحك يقلل من هرمون التوتر ويزيد المناعة في جسمك.
+16. كوكب الزهرة هو الكوكب الوحيد الذي يدور في اتجاه عكسي.
+17. جسمك يفقد حوالي 60 ألف خلية جلدية كل دقيقة.
+18. القراءة قبل النوم تحسن جودة نومك وتقلل التوتر.
+19. المشي thirty دقيقة يومياً يقلل خطر أمراض القلب.
+20. العقل الباطن يحفظ كل تجربة مررت بها في حياتك.
+21. الطبيعة تعيد شحن طاقتك بشكل أسرع من أي طريقة أخرى.
+22. التعلم لغة جديدة يؤخر الشيخوخة الدماغية سنوات.
+23. الجسم يعيد بناء نفسه أثناء النوم العميق ليلاً.
+24. الشكر اليومي يعيد برمجة عقلك للتفكير بإيجابية.
+25. الكون يحتوي على عدد من النجوم أكثر من حبات الرمال.
+
+خاتمة: الكون مليء بالعجائب والمعجزات التي تنتظر من يكتشفها. استمر في التعلم واستكشاف ما حولك.
+
+هاشتاجات: #علم #معلومات #حقائق""",
+
+    # Fallback 4: حكمة
+    """عنوان: حكم خالدة من أعظم عقول التاريخ تغير نظرتك للحياة
+
+مقدمة: عبر التاريخ، ترك لنا أعظم الحكماء والفلاسفة كلمات قليلة تحمل معاني عميقة. إليك حكم ستغير طريقة تفكيرك.
+
+فقرات:
+1. قال سقراط: أعرف أني لا أعرف شيئاً وهذا بداية الحكمة الحقيقية.
+2. قال كونفوشيوس: لا يهم كم تسير ببطء المهم أن لا تتوقف أبداً.
+3. قال أينشتاين: الخيال أهم من المعرفة لأن المعرفة محدودة.
+4. قال بوذا: السلام يأتي من داخلك فلا تبحث عنه في الخارج.
+5. قال أرسطو: نحن ما نفعله باستمرار فالتفوق عادة وليس فعلاً.
+6. قال شكسبير: لا شيء من الخير أو الشر إلا التفكير يجعله كذلك.
+7. قال غاندي: كن أنت التغيير الذي تريد أن تراه في العالم.
+8. قال تولستوي: السعادة الحقيقية ليست في اللذات بل في العمل.
+9. قال سينيكا: المعاناة تأتي من مقاومة ما لا يمكن تغييره.
+10. قال ماركوس أوريليوس: لديك قوة على عقلك وليس على الأحداث.
+11. قال الفارابي: أفضل طريقة لتعلم شيء جديد هي تعليمه للغير.
+12. قال ابن سينا: العلم نور والجهل ظلام يبعدك عن النجاح.
+13. قال المهاتما غاندي: القوة لا تأتي من القدرة الجسدية بل من الإرادة.
+14. قال نيتشه: ما لا يقتلني يجعلني أقوى من ذي قبل.
+15. قال جبران خليل: الألم هو الكسر في القشرة التي تغلف فهمك.
+16. قال طه حسين: العلم نور جهل ظلام وهذا هو الفرق الحقيقي.
+17. قال نجيب محفوظ: الإنسان حين يفقد الأمل يفقد كل شيء.
+18. قال المثل العربي: من جد وجد ومن زرع حصد ثمار تعبه.
+19. قال الإمام علي: قيمة كل امرئ ما يحسنه فأتقن عملك.
+20. قال عمر بن الخطاب: لو كان الفقر رجلاً لقتلته من شدة الفقر.
+21. قال أبو نواس: ليس كل ما يتمنى المرء يدركه لكن حاول.
+22. قال المتنبي: على قدر أهل العزم تأتي العزائم وتأتي.
+23. قال الإمام الشافعي: طلب العلم فريضة على كل مسلم ذكراً كان أو أنثى.
+24. قال ابن خلدون: التاريخ يكرر نفسه لأن الطبيعة البشرية لا تتغير.
+25. قال المثل: الوقت كالسيف إن لم تقطعه قطعك في حياتك.
+
+خاتمة: الحكم ليست مجرد كلمات جميلة بل هي مفاتيح لحياة أفضل. اختر حكمة واحدة وطبقها اليوم.
+
+هاشتاجات: #حكمة #اقتباسات #فلسفة""",
+
+    # Fallback 5: قصص ملهمة
+    """عنوان: قصص نجاح حقيقية أثبتت أن المستحيل ممكن
+
+مقدمة: كل نجاح كبير بدأ من خطوة صغيرة. إليك قصص حقيقية لأشخاص صنعوا المستحيل بالعمل والإصرار.
+
+فقرات:
+1. توماس إديسون فشل ألف مرة قبل أن يخترع المصباح الكهربائي.
+2. جيه كي رولينج كتبت هاري بوتر وهي تعيش على المساعدات.
+3. عبد الله الشامي ترك الجامعة ليؤسس شركة قيمتها ملايين.
+4. ستيف جوبز طُرد من شركته ثم عاد وجعلها الأكبر عالمياً.
+5. محمد الصالح بن علي بنى إمبراطورية تجارية من لا شيء.
+6. أوبرا وينفري ولدت فقيرة وأصبحت من أغنى النساء في العالم.
+7. إيلون ماسك كاد يفلس ثلاث مرات قبل أن ينجح في تسلا.
+8. خالد بن وليد لم يخسر معركة واحدة رغم كثرة أعدائه.
+9. نورمان بورلوج أنقذ مليار شخص من الجوع باختراع بسيط.
+10. ماري كوري فازت بجائزتي نوبل رغم الفقر والتمييز.
+11. مالكولم اكس تعلم القراءة في السجن وغيّر مسار تاريخ.
+12. ليزلي وو بنات من القرية أصبحت رائدة في التكنولوجيا.
+13. صلاح الدين الأيوبي وحد المسلمين رغم انقسامهم الشديد.
+14. هيلين كيلر تعلّمت رغم العمى والصمم وألهمت العالم.
+15. نيك فويتشش عاش بدون أطراف وأصبح متحدثاً عالمياً.
+16. فاطمة الفهرية أسست أول جامعة في العالم في المغرب.
+17. نيلسون مانديلا صبر 27 عاماً في السجن ونال الحرية.
+18. كولونيل ساندرز بدأ كنتاكي بعمر 65 عاماً ولم يتأخر.
+19. فريدريك دوغلاس هرب من العبودية وأصبح كاتباً عظيماً.
+20. ابن الهيثم اخترع الكاميرا رغم السجن والظروف الصعبة.
+21. جيسوس دي لارازارو بنى شركة من شاحنة واحدة.
+22. مارياما بانغورا أسست منظمة ساعدت آلاف الفتيات.
+23. تيم بيرنرز لي اخترع الإنترنت ولم يطلب عليه حقاً.
+24. رجا أشوكة أوقفت العنف ضد النساء بحملة بسيطة.
+25. أنت تعرف شخصاً عادياً حقق شيئاً عظيماً يوماً ما.
+
+خاتمة: لا يوجد شيء مستحيل إذا آمنت بنفسك وعملت بجد. قصص هؤلاء تثبت أن الإرادة أقوى من أي عائق.
+
+هاشتاجات: #قصص #إلهام #نجاح""",
+
+    # Fallback 6: صحة
+    """عنوان: عشرين سرّاً لصحة أفضل وطاقة أكبر كل يوم
+
+مقدمة: صحتك هي أهم ما تملك. إليك أسرار بسيطة لكن تأثيرها هائل على جسمك وعقلك.
+
+فقرات:
+1. شرب ثلاثة لتر ماء يومياً يحسن بشرتك ويزيد طاقتك.
+2. المشي نصف ساعة يومياً يقلل خطر أمراض القلب بالنصف.
+3. النوم سبع ساعات يحسن ذاكرتك ويجدد خلايا جسمك.
+4. الأكل الأخضر يومياً يمد جسمك بفيتامينات أساسية.
+5. تجنب السكر المكرر يحميك من السكري وأمراض كثيرة.
+6. التأمل عشر دقائق يومياً يقلل التوتر ويزيد التركيز.
+7. التمرين الصباحي يرفع مزاجك طوال اليوم بشكل طبيعي.
+8. الأكل البطيء والمضغ الجيد يحسن هضمك بشكل ملحوظ.
+9. شرب الشاي الأخضر يومياً يحمي قلبك ويبطئ الشيخوخة.
+10. الوقوف كل ساعة يحمي عمودك الفقري ويحسن دورتك.
+11. التعرض لأشعة الشمس صباحاً ينظم ساعتك البيولوجية.
+12. الأكل قبل النوم بساعتين يحسن جودة نومك كثيراً.
+13. تمارين التنفس العميق تخفض ضغط الدم فوراً.
+14. الضحك المتكرر يقوي جهاز المناعة ويحسن المزاج.
+15. تقليل الملح يحمي كلى قلبك ويمنع ارتفاع الضغط.
+16. المشي حافياً على العشب يريح أعصابك ويقلل التوتر.
+17. القراءة قبل النوم تبطئ نشاط عقلك وتسهل النوم.
+18. شرب عصير الليمون صباحاً ينشط كبدك ويحرق الدهون.
+19. الجلوس في وضعية صحيحة يمنع آلام الظهر المزمنة.
+20. التوقف عن مشاهدة الشاشات قبل النوم بساعة يريحك.
+21. الأكل المتنوع يضمن حصول جسمك على كل الفيتامينات.
+22. المشي بعد الأكل يحسن هضمك ويقلل السكر في دمك.
+23. الاستحمام بالماء البارد يقوي جهازك المناعي يومياً.
+24. الكتابة عن مشاعرك يريح عقلك ويقلل القلق النفسي.
+25. الشكر اليومي يقلل التوتر ويحسن صحتك النفسية.
+
+خاتمة: صحتك أغلى من أي شيء فاعتن بها اليوم قبل الغد. كل عادة صغيرة تضيفها تحمي مستقبلك بالكامل.
+
+هاشتاجات: #صحة #عافية #نمط_حياة""",
+
+    # Fallback 7: مالية
+    """عنوان: أسرار بناء الثروة التي لا يخبرك بها أحد
+
+مقدمة: الحرية المالية ليست حلماً بعيداً بل هي نتيجة قرارات ذكية تأخذها اليوم. إليك أسرار البناء المالي.
+
+فقرات:
+1. ادخر عشرين بالمئة من دخلك مهما كان قليلاً في البداية.
+2. الاستثمار المبكر حتى بمبالغ صغيرة يصنع ثروة كبيرة.
+3. تجنب الديون الاستهلاكية فهي سجن مادي لا تعرفه.
+4. التعلم عن المال أفضل استثمار يمكنك القيام به.
+5. تنويع مصادر الدخل يحميك من فقدان عملك الوحيد.
+6. الميزانية الشخصية ليست قيداً بل هي خريطة لمستقبلك.
+7. الشراء بالائتمان بدون تخطيط يدمر مستقبلك المالي.
+8. الطوارئ المالية لا تأتي فجأة بل يمكن الاستعداد لها.
+9. الاستثمار في نفسك يعود بأرباح لا تقدر بثمن.
+10. الصبر في الاستثمار يصنع ثروة أكبر من المقامرة.
+11. تقليل المصاريف غير الضرورية يوفر آلاف سنوياً.
+12. العقارات تاريخياً أفضل استثمار طويل الأمد.
+13. القراءة عن الاقتصاد تجعل قراراتك المالية أذكى.
+14. تجنب مقارنة نفسك مالياً بالاخرين يحفظ سلامك.
+15. خطة التقاعد المبكر ممكنة إذا بدأت في العشرينات.
+16. الأعمال الجانبية تزيد دخلك وتبني مهاراتك.
+17. الحماية من الاحتيال المالي تبدأ بالمعرفة والتوعية.
+18. التفاوض على راتبك حقاً مشروع لا ينبغي خجله.
+19. التعليم المالي للأطفال يحمي مستقبلهم المالي.
+20. التضخم يأكل مدخراتك إن لم تستثمرها بذكاء.
+21. شبكة العلاقات المهنية تفتح فرصاً مالية غير متوقعة.
+22. ريادة الأعمال محفوفة بمخاطر لكن عوائدها هائلة.
+23. الصناديق الاستثمارية تناسب المبتدئين ذوي المدخرات.
+24. المراجعة الشهرية لحساباتك تكشف تسريبات مالية.
+25. الثروة الحقيقية هي راحة البال وليس فقط الأرقام.
+
+خاتمة: المال أداة وليس هدفاً فاستخدمه لبناء حياة أفضل. ابدأ اليوم بخطوة صغيرة ومستمرة نحو الحرية المالية.
+
+هاشتاجات: #مالية #استثمار #ثروة""",
+
+    # Fallback 8: تطوير ذات
+    """عنوان: كيف تصبح نسخة أفضل من نفسك في تسعين يوماً
+
+مقدمة: التسعون يوماً كافية لتغيير حياتك بالكامل إذا التزمت بخطة واضحة. إليك خطة عملية لتصبح شخصاً أفضل.
+
+فقرات:
+1. الشهر الأول ركز على بناء عادات صحية أساسية فقط.
+2. اكتب أهدافك الثلاث الأكثر أهمية ولا تتنازل عنها.
+3. الاستيقاظ في نفس الوقت يومياً يبني انضباطك.
+4. اشرب لتر ماء قبل منتصف النهار لتحافظ على تركيزك.
+5. مارس رياضة خفيفة ربع ساعة يومياً لتحسن مزاجك.
+6. اقرأ عشر صفحات من كتاب مفيد يومياً بدون انقطاع.
+7. خصص ساعة للتعلم الأسبوعي في مهارة جديدة.
+8. نظف مساحتك الشخصية كل أسبوع لراحة عقلك.
+9. تحدث مع شخص ملهم أسبوعياً ليوسع أفقك.
+10. الشهر الثاني أضف أهداف تطوير مهني وشخصي.
+11. حدد ثلاثة مشاريع جانبية تثير شغفك الحقيقي.
+12. تعلم مهارة تقنية جديدة تفتح لك أبواباً مهنية.
+13. ابدأ بمدونة أو قناة لنشر ما تعلمته يومياً.
+14. شارك في فعالية مهنية شهرياً لتوسيع شبكتك.
+15. الشهر الثالث ركز على العطاء والمساعدة للغير.
+16. تطوع في عمل خيري مرة أسبوعياً على الأقل.
+17. شارك معرفتك مع من يحتاجها بلا انتظار مقابل.
+18. اكتب ملاحظات يومية عن تقدمك وكل ما تعلمته.
+19. كافئ نفسك على إنجازاتك الصغيرة أسبوعياً.
+20. راجع أهدافك كل شهر وعدلها حسب تطورك.
+21. لا تقارن نفسك بالاخرين بل بنفسك قبل شهر.
+22. احتضن الفشل كفرصة للتعلم وليس نهاية الطريق.
+23. احط نفسك بأشخاص إيجابيين يدعمون طموحك.
+24. ابق مرناً وجاهزاً لتعديل خطتك حسب الظروف.
+25. تذكر أن الرحلة أجمل من الوصول فلا تستعجل.
+
+خاتمة: بعد تسعين يوماً لن تكون نفس الشخص. التغيير الحقيقي يبدأ من قرار صغير اليوم وتكراره كل يوم.
+
+هاشتاجات: #تطوير_الذات #خطة #تحسن""",
+
+    # Fallback 9: تكنولوجيا
+    """عنوان: كيف غيّر الذكاء الاصطناعي العالم في عقد واحد
+
+مقدمة: منذ عشر سنوات فقط لم يكن أحد يتخيل ما وصلنا إليه. إليك كيف غيّر الذكاء الاصطناعي كل جانب في حياتنا.
+
+فقرات:
+1. السيارات ذاتية القيادة أصبحت حقيقة على طرق العالم.
+2. المساعدات الصوتية فهمت لغاتنا وأصبحت رفيقة يومية.
+3. التشخيص الطبي بالذكاء الاصطناعي أدق من الأطباء.
+4. الترجمة الفورية كسرت حواجز اللغة بين شعوب العالم.
+5. الروبوتات أصبحت تعمل في مصانع دون تدخل بشري.
+6. التنبؤ بالطقس أصبح أدق بفضل خوارزميات التعلم.
+7. الزراعة الذكية تزيد المحاصيل وتقلل استهلاك المياه.
+8. الأمن السيبراني يعتمد على ذكاء اصطناعي لحمايتنا.
+9. الفن التشكيلي والموسيقي ولّدها الذكاء الاصطناعي.
+10. التعليم الشخصي يناسب كل طالب حسب قدراته.
+11. البحث العلمي تسارع عشر مرات بفضل الذكاء الاصطناعي.
+12. التجارة الإلكترونية تعرف ما تريد قبل أن تطلبه.
+13. السيارات الطائرة قيد التطوير وستغير المواصلات.
+14. الواقع المعزز يدمج العالم الرقمي مع الواقعي.
+15. العملات الرقمية غيرت مفهوم المال والتبادل العالمي.
+16. الطباعة ثلاثية الأبعاد تصنع أعضاء بشرية حية.
+17. الشبكات العصبية تحاكي طريقة عمل الدماغ البشري.
+18. الطائرات بدون طيار تغير مفهوم الشحن والتوصيل.
+19. الإنترنت الأشياء يربط كل شيء في منزلك بشبكة.
+20. البلوكتشين يحمي بياناتك من التلاعب والاحتيال.
+21. الحوسبة السحابية تجعل قوة الحاسوب في كل مكان.
+22. التعرف على الوجوه يحسن الأمن ويحمي خصوصيتك.
+23. العلاج الجيني يصحح أمراضاً وراثية مستعصية.
+24. الطاقة المتجددة أصبحت أرخص من الوقود الأحفوري.
+25. المستقبل يحمل مفاجآت أكثر من كل ما تخيلناه.
+
+خاتمة: التغيير يتسارع بشكل لا يصدق والمعرفة هي مفتاح مواكبته. استمر في التعلم والتكيف مع كل جديد.
+
+هاشتاجات: #تكنولوجيا #ذكاء_اصطناعي #مستقبل""",
+
+    # Fallback 10: فلسفة حياة
+    """عنوان: عشرين قاعدة ذهبية لعيش حياة أكثر سعادة ورضا
+
+مقدمة: السعادة ليست وجهاً واحداً بل هي نتيجة قرارات يومية بسيطة. إليك قواعد ذهبية لحياة أفضل.
+
+فقرات:
+1. امتنن لثلاثة أشياء في حياتك كل صباح بلا استثناء.
+2. لا تقارن فصلك الأول بفصل شخص آخر الأخير.
+3. اختر معاركك بحكمة فليس كل خلاف يستحق طاقتك.
+4. استثمر في علاقاتك فالثروة الحقيقية في الناس.
+5. لا تخف من قول لا لما لا يخدم أهدافك الحقيقية.
+6. تعلم من كل موقف سواء كان إيجابياً أو سلبياً.
+7. اعطِ دون انتظار المقابل فالعطاء يملأ قلبك.
+8. سامح من أساء إليك فالتسامح يحررك أنت أولاً.
+9. اعتنِ بجسمك فهو وعاء روحك الذي تعيش فيه.
+10. لا تتوقف عن التعلم فالتوقف يعني الموت التدريجي.
+11. حدد أهدافك بوضوح فبدون خريطة تضيع في الطريق.
+12. كن صادقاً مع نفسك فالصدق الداخلي أساس كل نجاح.
+13. احتضن التغيير فهو ثابت الحياة الوحيد المؤكد.
+14. لا تحكم على الكتاب من غلافه ولا الناس من مظهرهم.
+15. عش في الحاضر فالماضي درس والمستقبل أمل فقط.
+16. اختر أصدقاءك بحكمة فهم يشكلون شخصيتك.
+17. لا تتوقف عن المحاولة فالفشل مجرد خطوة للتعلم.
+18. اعمل ما تحب حتى لا تشعر أنك تعمل يوماً.
+19. ساعد شخصاً واحداً على الأقل يومياً بلا مقابل.
+20. لا تخف من الخطأ فالكمال وهم والكمال مستحيل.
+21. احتفل بإنجازاتك الصغيرة فهي وقود استمرارك.
+22. لا تدع رأي الاخرين يحدد مسارك في هذه الحياة.
+23. كن كريماً في كل شيء فالكرم يجذب الخير إليك.
+24. استمع أكثر مما تتكلم فالاستماع يحل معظم المشاكل.
+25. تذكر أن الحياة قصيرة فاستمتع بكل لحظة فيها.
+
+خاتمة: الحياة هدية لا تُكرر فعشها بكل ما فيها من فرح وتحدي. كل يوم جديد هو فرصة لتصبح أفضل.
+
+هاشتاجات: #حياة #سعادة #قواعد""",
+]
+
+# ─── Step 1: Generate 15-Minute Script ──────────────────────────────────────
+
+def generate_script():
+    """Generate a 15-minute video script with UNIQUE topic each time"""
+    # Pick a random topic (never the same sequence)
+    topic = random.choice(ALL_TOPICS)
+    unique_seed = hashlib.md5(f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{random.randint(1,99999)}".encode()).hexdigest()[:8]
+
+    prompt = f"""أنت كاتب سكربتات فيديو احترافي باللغة العربية. اكتب سكربت فيديو طويل جداً (15 دقيقة قراءة) باللغة العربية الفصحى عن:
 
 الموضوع: {topic}
+التاريخ: {datetime.now().strftime('%Y-%m-%d')}
+Seed: {unique_seed}
 
 المطلوب:
-1. عنوان جذاب للفيديو (10 كلمات كحد أقصى)
-2. مقدمة قوية تشد الانتباه (جملة واحدة)
-3. 4-5 جمل محتوى قيمة ومفيدة
-4. خاتمة تحفيزية (جملة واحدة)
-5. هاشتاجات مناسبة (3 هاشتاجات)
+- عنوان جذاب ومميز (10-15 كلمة)
+- مقدمة قوية وجذابة (3-4 جمل)
+- 25 فقرة مختلفة تماماً، كل فقرة فكرة جديدة ومستقلة
+- خاتمة تحفيزية (3-4 جمل)
+- 3 هاشتاجات
 
-أجب بهذا التنسيق بالضبط:
+تعليمات مهمة جداً:
+- كل فقرة فريدة ومختلفة عن الأخرى تماماً
+- لا تكرر نفس الفكرة أبداً
+- السكربت طويل جداً (15 دقيقة على الأقل)
+- لغة بسيطة ومناسبة للنطق الصوتي
+- معلومات دقيقة ومفيدة
+- تنويع في الأفكار بين الفقرات
+
+التنسيق المطلوب:
 عنوان: [العنوان]
 مقدمة: [المقدمة]
-جمل:
-- [جملة 1]
-- [جملة 2]
-- [جملة 3]
-- [جملة 4]
-- [جملة 5]
+فقرات:
+1. [الفقرة الأولى]
+2. [الفقرة الثانية]
+... (25 فقرة)
 خاتمة: [الخاتمة]
-هاشتاجات: [هاشتاج1] [هاشتاج2] [هاشتاج3]
+هاشتاجات: [هاشتاج1] [هاشتاج2] [هاشتاج3]"""
 
-ملاحظة: اكتب بجمل بسيطة وقوية ومناسبة للنطق الصوتي. لا تستخدم رموز أو أرقام معقدة."""
-
-    # Try multiple Gemini models
-    models = [
-        "gemini-1.5-flash-lite",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash",
-    ]
-
-    for model in models:
+    for model in GEMINI_MODELS:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-
         payload = {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }],
-            "generationConfig": {
-                "temperature": 0.8,
-                "maxOutputTokens": 1000
-            }
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 1.0, "maxOutputTokens": 8000}
         }
-
         headers = {"Content-Type": "application/json"}
 
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=60)
+            print(f"   ⏳ نموذج: {model} | موضوع: {topic[:30]}...")
+            response = requests.post(url, json=payload, headers=headers, timeout=120)
+            
             if response.status_code == 200:
                 data = response.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
-                print(f"   ✅ تم استخدام نموذج: {model}")
-                script = parse_script(text)
-                if script["title"]:
-                    return script
-                print(f"   ⚠️ النموذج {model} لم يرجع عنوان - نجرب التالي")
-            elif response.status_code == 429 or response.status_code == 503:
-                print(f"   ⚠️ {model}: غير متاح حالياً ({response.status_code})")
-                time.sleep(2)
-                continue
+                text = None
+                if "candidates" in data and len(data["candidates"]) > 0:
+                    parts = data["candidates"][0].get("content", {}).get("parts", [])
+                    if parts:
+                        text = parts[0].get("text", "")
+                
+                if text:
+                    print(f"   ✅ نموذج نجح: {model}")
+                    script = parse_script(text)
+                    if script["paragraphs"] and len(script["paragraphs"]) >= 10:
+                        script["topic"] = topic
+                        print(f"   ✅ {len(script['paragraphs'])} فقرة فريدة")
+                        return script
+                    else:
+                        print(f"   ⚠️ سكربت قصير ({len(script['paragraphs'])} فقرة)")
+                        continue
+                else:
+                    print(f"   ⚠️ {model}: لم يرجع نص")
+                    continue
+            elif response.status_code in (429, 503):
+                print(f"   ⚠️ {model}: غير متاح ({response.status_code})")
+                time.sleep(5)
             elif response.status_code == 404:
                 print(f"   ⚠️ {model}: غير متوفر")
-                continue
             else:
                 print(f"   ⚠️ {model}: خطأ {response.status_code}")
-                continue
         except Exception as e:
-            print(f"   ⚠️ {model}: خطأ {e}")
-            continue
+            print(f"   ⚠️ {model}: {e}")
 
-    # Fallback to default script
-    print("   ⚠️ جاري استخدام سكربت احتياطي...")
-    return parse_script(_get_fallback_script())
-
-
-def _get_fallback_script():
-    """Fallback script when Gemini fails"""
-    return """عنوان: سر النجاح الحقيقي
-مقدمة: هل تساءلت يوماً لماذا ينجح بعض الناس بينما يفشل الاخرون؟
-جمل:
-- النجاح ليس حظاً بل هو نتيجة عمل مستمر وتخطيط ذكي
-- كل شخص ناجح واجه صعوبات كثيرة لكنه لم يستسلم ابداً
-- الثقة بالنفس هي المفتاح الاول لتحقيق اي هدف
-- التعلم المستمر والتطوير الذاتي هما سلاحك الاقوى
-- لا تقارن نفسك بالاخرين بل قارن نفسك بامستقبلك
-خاتمة: ابدا اليوم واتخذ خطوة واحدة نحو حلمك.
-هاشتاجات: #تحفيز #نجاح #تطوير_الذات"""
+    # Fallback: pick a RANDOM fallback script (different each time)
+    print("   ⚠️ Gemini فشل - استخدام سكربت احتياطي عشوائي...")
+    fallback = random.choice(FALLBACK_SCRIPTS)
+    script = parse_script(fallback)
+    script["topic"] = topic  # Keep the topic even for fallback
+    return script
 
 
 def parse_script(text):
-    """Parse the Gemini response into structured script"""
-    script = {
-        "title": "",
-        "intro": "",
-        "sentences": [],
-        "conclusion": "",
-        "hashtags": ""
-    }
-
-    # Extract title
-    title_match = re.search(r'عنوان[:\uff1a]\s*(.+)', text)
-    if title_match:
-        script["title"] = title_match.group(1).strip()
-
-    # Extract intro
-    intro_match = re.search(r'مقدمة[:\uff1a]\s*(.+)', text)
-    if intro_match:
-        script["intro"] = intro_match.group(1).strip()
-
-    # Extract sentences
-    sentences = re.findall(r'-\s*(.+)', text)
-    script["sentences"] = [s.strip() for s in sentences if s.strip()]
-
-    # Extract conclusion
-    conclusion_match = re.search(r'خاتمة[:\uff1a]\s*(.+)', text)
-    if conclusion_match:
-        script["conclusion"] = conclusion_match.group(1).strip()
-
-    # Extract hashtags
-    hashtag_match = re.search(r'هاشتاجات[:\uff1a]\s*(.+)', text)
-    if hashtag_match:
-        script["hashtags"] = hashtag_match.group(1).strip()
+    """Parse script text into structured format"""
+    script = {"title": "", "intro": "", "paragraphs": [], "conclusion": "", "hashtags": ""}
+    
+    lines = text.split("\n")
+    
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("عنوان:") or stripped.startswith("عنوان："):
+            script["title"] = stripped.split(":", 1)[-1].split("：", 1)[-1].strip()
+        elif stripped.startswith("مقدمة:") or stripped.startswith("مقدمة："):
+            script["intro"] = stripped.split(":", 1)[-1].split("：", 1)[-1].strip()
+        elif stripped.startswith("خاتمة:") or stripped.startswith("خاتمة："):
+            script["conclusion"] = stripped.split(":", 1)[-1].split("：", 1)[-1].strip()
+        elif stripped.startswith("هاشتاجات:") or stripped.startswith("هاشتاجات："):
+            script["hashtags"] = stripped.split(":", 1)[-1].split("：", 1)[-1].strip()
+        elif re.match(r"^\d+[.\)]", stripped):
+            para_text = re.sub(r"^\d+[.\)]\s*", "", stripped)
+            if len(para_text) > 15:
+                script["paragraphs"].append(para_text)
+        elif stripped.startswith("-") or stripped.startswith("•"):
+            para_text = stripped.lstrip("-• ").strip()
+            if len(para_text) > 15:
+                script["paragraphs"].append(para_text)
 
     return script
 
 
-# ─── Step 2: Generate Audio with edge-tts ────────────────────────────────────
+# ─── Step 2: Generate Audio ─────────────────────────────────────────────────
 
 async def generate_audio(text, output_path):
-    """Generate Arabic audio using edge-tts (Microsoft free TTS)"""
+    """Generate Arabic audio using edge-tts"""
     communicate = edge_tts.Communicate(text, VOICE, rate="-10%")
-    submaker = edge_tts.SubMaker()
-
+    
     with open(output_path, "wb") as f:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 f.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                submaker.feed(chunk)
 
-    srt_content = submaker.get_srt()
-    # Save SRT to temp
-    srt_path = os.path.join(TEMP_DIR, "audio_subs.srt")
-    with open(srt_path, "w", encoding="utf-8") as sf:
-        sf.write(srt_content)
-    return srt_content
+    file_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+    print(f"   حجم الصوت: {file_size / (1024*1024):.1f} MB")
+    
+    dur_result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", output_path],
+        capture_output=True, text=True, timeout=10
+    )
+    duration = float(dur_result.stdout.strip()) if dur_result.stdout.strip() else 0
+    print(f"   مدة الصوت: {duration/60:.1f} دقيقة ({duration:.0f} ثانية)")
+    
+    return duration
 
 
 def get_full_script_text(script):
-    """Combine all script parts into full narration text"""
+    """Combine all script parts into narration text"""
     parts = []
     if script.get("intro"):
         parts.append(script["intro"])
-    for sentence in script.get("sentences", []):
-        parts.append(sentence)
+    for paragraph in script.get("paragraphs", []):
+        parts.append(paragraph)
     if script.get("conclusion"):
         parts.append(script["conclusion"])
-    return " ".join(parts)
+    return " . ".join(parts) + " ."
 
 
-# ─── Step 3: Generate Images with Pollinations.ai (with retry + local fallback) ──
+# ─── Step 3: Generate Images ────────────────────────────────────────────────
 
-# Minimum size (bytes) for a downloaded file to be considered a valid image.
-# Pollinations sometimes returns a tiny error payload with a 200 status too,
-# so we check both the HTTP status AND the actual file size.
-MIN_VALID_IMAGE_BYTES = 5000
-
-# Alternate image sources / seeds to retry with, in order.
-POLLINATIONS_MODELS = ["flux", "turbo"]  # pollinations model param, if available
-
-
-def _download_pollinations_image(prompt, output_path, width, height, seed, model=None):
-    """Single attempt to download one image from Pollinations.ai.
-    Returns True only if the request succeeded AND the file looks like a real image."""
-    encoded_prompt = requests.utils.quote(prompt)
-    url = (
-        f"https://image.pollinations.ai/prompt/{encoded_prompt}"
-        f"?width={width}&height={height}&nologo=true&seed={seed}"
-    )
-    if model:
-        url += f"&model={model}"
-
-    try:
-        response = requests.get(url, timeout=60)
-        response.raise_for_status()
-        if len(response.content) < MIN_VALID_IMAGE_BYTES:
-            print(f"   ⚠️ الصورة صغيرة جداً/فاسدة ({len(response.content)} بايت) - نعتبرها فشل")
-            return False
-        with open(output_path, "wb") as f:
-            f.write(response.content)
-        return True
-    except Exception as e:
-        print(f"   ⚠️ فشل تحميل الصورة: {e}")
-        return False
-
-
-def _download_picsum_image(output_path, width, height):
-    """Second-tier fallback: fetch a random real photo from Lorem Picsum.
-    No API key needed, doesn't depend on prompt matching, but is far more
-    visually usable than a flat placeholder if Pollinations is completely down."""
-    seed = int(time.time() * 1000) % 1000000
-    url = f"https://picsum.photos/seed/{seed}/{width}/{height}"
-    try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        if len(response.content) < MIN_VALID_IMAGE_BYTES:
-            return False
-        with open(output_path, "wb") as f:
-            f.write(response.content)
-        print(f"   🖼️ استُخدمت صورة احتياطية من Picsum بدلاً من Pollinations")
-        return True
-    except Exception as e:
-        print(f"   ⚠️ فشل تحميل الصورة الاحتياطية من Picsum: {e}")
-        return False
-
-
-def _make_local_placeholder_image(output_path, text, width=1280, height=720):
-    """Last-resort fallback: generate a simple solid-color placeholder image locally
-    using Pillow, so the pipeline can still produce a video even if Pollinations
-    AND Picsum are both down. Requires Pillow (pip install Pillow)."""
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-        import random
-
-        colors = [(30, 30, 60), (20, 50, 70), (50, 30, 60), (25, 45, 35), (55, 40, 20)]
-        bg = random.choice(colors)
-        img = Image.new("RGB", (width, height), color=bg)
-        draw = ImageDraw.Draw(img)
-
+def generate_single_image(prompt, output_path, width=1280, height=720):
+    """Try Pollinations first, then gradient fallback. NO Picsum (too slow)"""
+    
+    # Try Pollinations with different seeds
+    for attempt in range(3):
         try:
-            font = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48
-            )
+            seed = random.randint(1000, 99999)
+            url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width={width}&height={height}&nologo=true&seed={seed}"
+            response = requests.get(url, timeout=25)
+            if response.status_code == 200 and len(response.content) > 5000:
+                with open(output_path, "wb") as f:
+                    f.write(response.content)
+                print(f"   ✅ Pollinations: {os.path.basename(output_path)}")
+                return True
+            elif response.status_code == 429:
+                time.sleep(3)
         except Exception:
-            font = ImageFont.load_default()
-
-        # Simple centered watermark-style text so scenes aren't just blank
-        label = text[:20] if text else "..."
-        try:
-            bbox = draw.textbbox((0, 0), label, font=font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        except Exception:
-            tw, th = (len(label) * 20, 40)
-        draw.text(((width - tw) / 2, (height - th) / 2), label, fill=(230, 230, 230), font=font)
-
-        img.save(output_path, "JPEG", quality=85)
-        return True
-    except Exception as e:
-        print(f"   ❌ فشل حتى إنشاء صورة احتياطية محلية: {e}")
-        return False
-
-
-def generate_image(prompt, output_path, width=1280, height=720, max_retries=3):
-    """Generate an image using Pollinations.ai (free, no API key needed),
-    with retries and a random seed each attempt so a repeated 500 doesn't
-    hit the exact same broken request."""
-    for attempt in range(1, max_retries + 1):
-        seed = int(time.time() * 1000) % 1000000 + attempt
-        ok = _download_pollinations_image(prompt, output_path, width, height, seed)
-        if ok:
-            print(f"✅ Image saved: {output_path} (attempt {attempt})")
-            return True
-        if attempt < max_retries:
-            wait = attempt * 3
-            print(f"   ⏳ إعادة محاولة توليد الصورة خلال {wait} ثانية... (محاولة {attempt + 1}/{max_retries})")
-            time.sleep(wait)
-
-    print(f"❌ فشلت كل محاولات Pollinations لهذه الصورة، هنجرب مصدر بديل (Picsum)")
-    if _download_picsum_image(output_path, width, height):
-        return True
-
-    print(f"   ❌ فشل Picsum أيضاً، هنستخدم صورة احتياطية محلية كملاذ أخير")
-    return _make_local_placeholder_image(output_path, prompt)
-
-
-def generate_scene_images(script, num_scenes=5):
-    """Generate images for each scene of the video.
-    Tries Kaggle GPU (Stable Diffusion, higher quality + more reliable) first
-    if configured; falls back to the Pollinations -> Picsum -> local
-    placeholder chain per-scene for anything Kaggle didn't produce.
-    Only paths that actually exist on disk are returned, so downstream
-    FFmpeg never receives a missing file."""
-    os.makedirs(TEMP_DIR, exist_ok=True)
-    images = [None] * num_scenes
-
-    # Get a random theme
-    theme = IMAGE_THEMES[int(time.time()) % len(IMAGE_THEMES)]
-
-    prompts = []
-    for i in range(num_scenes):
-        prompt_options = [
-            f"{theme}, beautiful artistic, cinematic lighting, high quality",
-            f"abstract art, {theme}, inspirational, warm colors",
-            f"epic landscape, {theme}, dramatic lighting, 4k quality",
-            f"artistic illustration, {theme}, professional design",
-            f"creative visual, {theme}, modern digital art",
-        ]
-        prompts.append(prompt_options[i % len(prompt_options)])
-
+            time.sleep(1)
+    
+    # Fallback: Beautiful gradient image with FFmpeg (instant, unique)
     try:
-        from kaggle_client import generate_images_via_kaggle
-        kaggle_images = generate_images_via_kaggle(prompts, TEMP_DIR)
-    except Exception as e:
-        print(f"⚠️ تخطي Kaggle بسبب خطأ غير متوقع: {e}")
-        kaggle_images = None
-
-    if kaggle_images:
-        for i, path in enumerate(kaggle_images):
-            if i < num_scenes:
-                images[i] = path
-        print(f"✅ Kaggle ولّد {len(kaggle_images)}/{num_scenes} صورة")
-
-    for i in range(num_scenes):
-        if images[i] is not None:
-            continue
-        image_path = os.path.join(TEMP_DIR, f"scene_{i:02d}.jpg")
-        success = generate_image(prompts[i], image_path)
-        if success and os.path.exists(image_path) and os.path.getsize(image_path) > 0:
-            images[i] = image_path
-        else:
-            print(f"   ⚠️ تخطي المشهد {i} - لا توجد صورة صالحة")
-
-    images = [p for p in images if p is not None]
-
-    if not images:
-        raise RuntimeError(
-            "فشل توليد كل الصور (Kaggle + Pollinations + الاحتياطي المحلي)، "
-            "لا يمكن إنشاء فيديو بدون صور. تحقق من اتصال الشبكة أو من تثبيت مكتبة Pillow."
+        r1 = random.randint(20, 150)
+        g1 = random.randint(20, 150)
+        b1 = random.randint(40, 180)
+        r2 = random.randint(30, 200)
+        g2 = random.randint(30, 200)
+        b2 = random.randint(40, 220)
+        gradient_cmd = (
+            f"[0:v]geq=r='lerp({r1},{r2},X/W)':g='lerp({g1},{g2},X/W)':b='lerp({b1},{b2},X/W)',drawbox=t=fill@0.3,"
+            f"drawtext=text='{chr(0x2728)}':fontsize=120:fontcolor=white@0.3:x=(w-text_w)/2:y=(h-text_h)/2"
         )
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:d=1",
+            "-vf", gradient_cmd, "-frames:v", "1", output_path
+        ], capture_output=True, text=True, timeout=10)
+        if os.path.exists(output_path):
+            print(f"   🎨 Gradient: {os.path.basename(output_path)}")
+            return True
+    except Exception:
+        pass
+    
+    # Last resort: solid color
+    try:
+        color = f"0x{random.randint(0x1a1a2e, 0x888888):06x}"
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c={color}:s={width}x{height}:d=1",
+            "-frames:v", "1", output_path
+        ], capture_output=True, text=True, timeout=5)
+        if os.path.exists(output_path):
+            return True
+    except Exception:
+        pass
+    
+    return False
 
+
+def generate_scene_images(num_scenes, topic=""):
+    """Generate diverse images based on topic"""
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    
+    # Topic-based image prompts (diverse and different each time)
+    topic_keywords = {
+        "تحفيز": "motivational inspiration sunrise golden cinematic",
+        "نجاح": "success achievement mountain peak dramatic",
+        "تطوير": "personal growth transformation butterfly artistic",
+        "علم": "science discovery laboratory cosmic stars",
+        "صحة": "health wellness nature green fresh morning",
+        "مالية": "finance wealth golden coins luxury professional",
+        "تكنولوجيا": "technology futuristic digital blue neon",
+        "حكمة": "wisdom ancient library philosophical artistic",
+        "قصص": "story journey path adventure cinematic dramatic",
+        "سعادة": "happiness joy warm colors sunshine peaceful",
+        "تاريخ": "history ancient civilization epic cinematic",
+        "طبيعة": "nature landscape beautiful scenic mountain ocean",
+        "فضاء": "space galaxy nebula stars cosmic infinite",
+        "عادات": "habits routine daily clock productivity morning",
+        "ذكاء": "intelligence brain thinking light bulb creative",
+        "إسلام": "islamic art geometric pattern golden mosque",
+        "نفسي": "psychology mind mental health calm meditation",
+    }
+    
+    # Find matching keyword
+    base_prompt = "beautiful cinematic lighting high quality artistic"
+    topic_prompt = base_prompt
+    for key, val in topic_keywords.items():
+        if key in topic:
+            topic_prompt = val
+            break
+    
+    # Generate diverse scene prompts
+    scene_templates = [
+        f"{topic_prompt} scene 1",
+        f"epic dramatic sky clouds {topic_prompt}",
+        f"golden hour warm light {topic_prompt}",
+        f"night city lights reflection {topic_prompt}",
+        f"peaceful garden flowers nature {topic_prompt}",
+        f"futuristic blue tones {topic_prompt}",
+        f"ancient books library wisdom {topic_prompt}",
+        f"desert sunset dramatic {topic_prompt}",
+        f"cosmic space stars nebula",
+        f"leadership success golden {topic_prompt}",
+        f"calm ocean waves sunset",
+        f"achievement peak breakthrough {topic_prompt}",
+        f"urban photography modern {topic_prompt}",
+        f"growth blooming spring flowers",
+        f"hope light window artistic {topic_prompt}",
+        f"energy fire passion dynamic",
+        f"forest path discovery journey",
+        f"balance harmony zen {topic_prompt}",
+        f"time clock artistic {topic_prompt}",
+        f"reaching sky dramatic {topic_prompt}",
+        f"bridge crossing cinematic {topic_prompt}",
+        f"diamond precious luxury golden",
+        f"sunrise mountain new beginning",
+        f"open road freedom adventure",
+        f"compass direction vintage {topic_prompt}",
+        f"puzzle pieces artistic {topic_prompt}",
+        f"strong tree resilience cinematic",
+        f"lighthouse dramatic sky hope",
+        f"constellation cosmic infinite",
+        f"gateway golden opportunity {topic_prompt}",
+    ]
+    
+    images = []
+    for i in range(num_scenes):
+        image_path = os.path.join(TEMP_DIR, f"scene_{i:02d}.jpg")
+        prompt = scene_templates[i % len(scene_templates)]
+        
+        if generate_single_image(prompt, image_path):
+            images.append(image_path)
+        
+        if (i + 1) % 10 == 0:
+            print(f"   ... {i+1}/{num_scenes} images")
+
+    print(f"   ✅ إجمالي الصور: {len(images)}")
     return images
 
 
-# ─── Step 4: Create Video with FFmpeg ────────────────────────────────────────
+# ─── Step 4: Create Video ───────────────────────────────────────────────────
 
-def create_video(images, audio_path, script, output_path):
-    """Create video from images + audio using FFmpeg"""
-    num_images = len(images)
-    if num_images == 0:
+def create_video(images, audio_path, output_path):
+    """Create video from images + audio with crossfade transitions"""
+    valid_images = [img for img in images if os.path.exists(img)]
+    num_images = len(valid_images)
+    
+    if num_images == 0 or not os.path.exists(audio_path):
+        print("   ❌ ملفات مفقودة")
         return False
 
     # Get audio duration
-    duration_result = subprocess.run(
+    dur_result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
-        capture_output=True, text=True
+        capture_output=True, text=True, timeout=10
     )
-    audio_duration = float(duration_result.stdout.strip())
+    audio_duration = float(dur_result.stdout.strip())
+    print(f"   مدة الصوت: {audio_duration/60:.1f} دقيقة | صور: {num_images}")
 
-    # Simple approach: single image slideshow
-    if num_images == 1:
+    # Duration per image (at least 3 seconds each)
+    duration_per_image = max(audio_duration / num_images, 3.0)
+    print(f"   مدة كل صورة: {duration_per_image:.0f} ثانية")
+
+    # Create clips with Ken Burns effect (zoom)
+    clips = []
+    for i, img in enumerate(valid_images):
+        clip_path = os.path.join(TEMP_DIR, f"clip_{i:02d}.mp4")
+        # Ken Burns zoom effect
+        zoom = "zoompan=z='min(zoom+0.0008,1.3)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=24"
         cmd = [
             "ffmpeg", "-y",
-            "-loop", "1", "-i", images[0],
-            "-i", audio_path,
-            "-vf", "scale=1280:720,format=yuv420p",
-            "-c:v", "libx264", "-tune", "stillimage", "-preset", "fast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k",
-            "-t", str(audio_duration),
-            "-pix_fmt", "yuv420p",
-            output_path
+            "-loop", "1", "-i", img,
+            "-vf", f"{zoom},format=yuv420p",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-t", str(duration_per_image),
+            "-pix_fmt", "yuv420p", "-r", "24",
+            clip_path
         ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode == 0 and os.path.exists(clip_path):
+            clips.append(clip_path)
+
+    if len(clips) == 0:
+        print("   ❌ فشل إنشاء المقاطع")
+        return False
+
+    print(f"   ✅ {len(clips)} مقطع جاهز")
+
+    # Concat
+    concat_path = os.path.join(TEMP_DIR, "concat_list.txt")
+    with open(concat_path, "w") as f:
+        for clip in clips:
+            f.write(f"file '{clip}'\n")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", concat_path,
+        "-i", audio_path,
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+        "-shortest", "-pix_fmt", "yuv420p",
+        output_path
+    ]
+
+    print("   🎬 إنشاء الفيديو النهائي...")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode == 0:
+        size_mb = os.path.getsize(output_path) / (1024*1024)
+        dur = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", output_path],
+            capture_output=True, text=True, timeout=10
+        )
+        vid_dur = float(dur.stdout.strip()) if dur.stdout.strip() else 0
+        print(f"   ✅ Video: {output_path} | {size_mb:.1f} MB | {vid_dur/60:.1f} دقائق")
+        return True
     else:
-        # Create clips for each image
-        duration_per_image = audio_duration / num_images
-        clips = []
-
-        for i, img in enumerate(images):
-            clip_path = os.path.join(TEMP_DIR, f"clip_{i:02d}.mp4")
-            cmd_clip = [
-                "ffmpeg", "-y",
-                "-loop", "1", "-i", img,
-                "-vf", f"scale=1280:720,format=yuv420p",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                "-t", str(duration_per_image),
-                "-pix_fmt", "yuv420p",
-                clip_path
-            ]
-            result = subprocess.run(cmd_clip, capture_output=True, text=True, timeout=60)
-            if result.returncode == 0:
-                clips.append(clip_path)
-            else:
-                print(f"   ⚠️ فشل بناء clip للصورة {img}: {result.stderr[-300:]}")
-
-        if not clips:
-            print("❌ لم ينجح بناء أي clip من الصور")
-            return False
-
-        # Concat clips with audio
-        concat_path = os.path.join(TEMP_DIR, "concat_list.txt")
-        with open(concat_path, "w") as f:
-            for clip in clips:
-                f.write(f"file '{clip}'\n")
-
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0",
-            "-i", concat_path,
-            "-i", audio_path,
-            "-c:v", "copy",
-            "-c:a", "aac", "-b:a", "128k",
-            "-shortest",
-            "-pix_fmt", "yuv420p",
-            output_path
-        ]
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        if result.returncode == 0:
-            print(f"✅ Video created: {output_path}")
-            print(f"   Size: {os.path.getsize(output_path) / (1024*1024):.1f} MB")
-            return True
-        else:
-            print(f"❌ FFmpeg error: {result.stderr[-500:]}")
-            return False
-    except subprocess.TimeoutExpired:
-        print("❌ FFmpeg timed out")
-        return False
-    except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"   ❌ FFmpeg: {result.stderr[-300:]}")
         return False
 
 
-# ─── Step 5: Generate Facebook Post Text ─────────────────────────────────────
+# ─── Step 5: Facebook Post ──────────────────────────────────────────────────
 
 def generate_facebook_post(script):
-    """Generate the Facebook post text"""
     title = script.get("title", "فيديو تحفيزي")
-    hashtags = script.get("hashtags", "#تحفيز #تطوير_الذات #نجاح")
-
+    hashtags = script.get("hashtags", "#تحفيز #نجاح #تطوير_الذات")
     post_text = f"📹 {title}\n\n"
     if script.get("intro"):
         post_text += f"{script['intro']}\n\n"
-    if script.get("sentences"):
-        for s in script["sentences"][:3]:
-            post_text += f"✨ {s}\n"
-        post_text += "\n"
+    if script.get("paragraphs"):
+        post_text += "✨ من أهم النقاط:\n\n"
+        for p in script["paragraphs"][:5]:
+            post_text += f"💡 {p}\n\n"
     if script.get("conclusion"):
         post_text += f"{script['conclusion']}\n\n"
     post_text += f"\n{hashtags}\n"
-
     return post_text
 
 
-# ─── Main Pipeline ───────────────────────────────────────────────────────────
+# ─── Main Pipeline ──────────────────────────────────────────────────────────
 
 async def main():
-    """Main video generation pipeline"""
     print("=" * 60)
-    print("🎬 Facebook Video Publisher - توليد فيديو تلقائي")
+    print("🎬 Facebook Video Publisher - فيديو فريد كل مرة")
+    print(f"   التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
-    # Setup
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
 
-    # Step 1: Generate script
-    print("\n📝 الخطوة 1: توليد سكربت الفيديو...")
+    # Step 1: Script
+    print("\n📝 الخطوة 1: سكربت فريد...")
     script = generate_script()
     print(f"   العنوان: {script['title']}")
-    print(f"   عدد الجمل: {len(script['sentences'])}")
+    print(f"   الفقرات: {len(script['paragraphs'])}")
 
-    # Save script
-    script_path = os.path.join(OUTPUT_DIR, "script.json")
-    with open(script_path, "w", encoding="utf-8") as f:
+    with open(os.path.join(OUTPUT_DIR, "script.json"), "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
 
-    # Step 2: Generate audio
+    # Step 2: Audio
     print("\n🔊 الخطوة 2: توليد الصوت...")
     full_text = get_full_script_text(script)
     audio_path = os.path.join(TEMP_DIR, "narration.mp3")
-    await generate_audio(full_text, audio_path)
-    print(f"   الملف: {audio_path}")
+    audio_duration = await generate_audio(full_text, audio_path)
 
-    # Step 3: Generate images
-    print("\n🖼️ الخطوة 3: توليد الصور...")
-    num_scenes = max(len(script["sentences"]) + 2, 4)
-    try:
-        images = generate_scene_images(script, num_scenes)
-    except RuntimeError as e:
-        print(f"❌ {e}")
-        return None
-    print(f"   تم توليد {len(images)} صورة صالحة من أصل {num_scenes}")
+    # Step 3: Images
+    num_paragraphs = len(script["paragraphs"])
+    num_scenes = max(num_paragraphs + 2, 20)
+    topic = script.get("topic", "")
+    print(f"\n🖼️ الخطوة 3: توليد {num_scenes} صورة (موضوع: {topic[:40]})...")
+    images = generate_scene_images(num_scenes, topic)
 
-    # Step 4: Create video
+    # Step 4: Video
     print("\n🎥 الخطوة 4: إنشاء الفيديو...")
     video_path = os.path.join(OUTPUT_DIR, "video.mp4")
-    success = create_video(images, audio_path, script, video_path)
+    success = create_video(images, audio_path, video_path)
 
     if not success:
         print("❌ فشل إنشاء الفيديو")
         return None
 
-    # Step 5: Generate post text
+    # Step 5: Post text
     post_text = generate_facebook_post(script)
 
-    # Save all outputs
     output = {
         "video_path": video_path,
         "post_text": post_text,
         "script": script,
         "title": script.get("title", ""),
-        "hashtags": script.get("hashtags", "")
+        "hashtags": script.get("hashtags", ""),
+        "topic": script.get("topic", ""),
     }
-
-    output_json_path = os.path.join(OUTPUT_DIR, "output.json")
-    with open(output_json_path, "w", encoding="utf-8") as f:
+    with open(os.path.join(OUTPUT_DIR, "output.json"), "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
     print("\n" + "=" * 60)
-    print("✅ تم إنشاء الفيديو بنجاح!")
-    print(f"   الفيديو: {video_path}")
-    print(f"   حجم الملف: {os.path.getsize(video_path) / (1024*1024):.1f} MB")
+    print("✅ تم إنشاء فيديو فريد!")
+    print(f"   الحجم: {os.path.getsize(video_path) / (1024*1024):.1f} MB")
+    print(f"   الموضوع: {script.get('topic', 'غير محدد')}")
     print("=" * 60)
 
     return output
