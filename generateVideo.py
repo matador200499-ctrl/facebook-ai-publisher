@@ -638,24 +638,74 @@ def save_history(topic):
     with open(history_path, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
+# Weekly schedule mapping based on bobo_yasoo design
+WEEKLY_SCHEDULE = {
+    0: {"day": "الإثنين", "category": "تحدي يومي", "desc": "تحدي تحفيزي أو فكري لزيادة الإنتاجية"},
+    1: {"day": "الثلاثاء", "category": "خلف الكواليس", "desc": "أسرار المهنة أو كيفية صناعة وتطوير الأفكار"},
+    2: {"day": "الأربعاء", "category": "تعليمي", "desc": "درس عميق في تطوير الذات، العلوم، أو الفلسفة"},
+    3: {"day": "الخميس", "category": "مجمع الأسبوع", "desc": "ملخص شامل لأبرز العادات أو الحقائق والدروس"},
+    4: {"day": "الجمعة", "category": "بث مباشر / تفاعلي", "desc": "حكم وأقوال خالدة أو قصة ملهمة كبرى"},
+    5: {"day": "السبت", "category": "ترفيهي", "desc": "حقائق مذهلة، عجائب الفضاء والطبيعة"},
+    6: {"day": "الأحد", "category": "معلومة سريعة", "desc": "حقائق علمية مدهشة ومختصرة"}
+}
+
+def generate_dynamic_topic():
+    """Generate a fresh unique topic dynamically using AI based on the current day's category"""
+    weekday = datetime.now().weekday() # 0-6 (Mon-Sun)
+    schedule_info = WEEKLY_SCHEDULE.get(weekday, {"category": "تطوير ذات", "desc": "نصائح عملية للحياة"})
+    category = schedule_info["category"]
+    day_name = schedule_info["day"]
+    
+    print(10*"=" + f" جدول المحتوى الأسبوعي: {day_name} ({category}) " + 10*"=")
+    
+    # Use Gemini to generate a brand new unique topic matching this category
+    prompt = f"""أنت مدير محتوى لقناة برمجية وتحفيزية ناجحة باسم bobo_yasoo.
+اليوم هو يوم {day_name} وتصنيف المحتوى لهذا اليوم هو: "{category}" (الوصف: {schedule_info['desc']}).
+قم بتوليد عنوان موضوع فيديو جديد كلياً، جذاب، احترافي، ومميز جداً (باللغة العربية الفصحى) يندرج تحت هذا التصنيف ولا يتكرر تقليدياً.
+أرجع فقط عنوان الموضوع بدون أي مقدمات أو شرح إضافي."""
+
+    for model in GEMINI_MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 1.2, "maxOutputTokens": 200}
+        }
+        headers = {"Content-Type": "application/json"}
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                if "candidates" in data and len(data["candidates"]) > 0:
+                    text = data["candidates"][0].get("content", {}).get("parts", [])[0].get("text", "").strip()
+                    if text:
+                        # Clean up quotes if any
+                        clean_topic = text.replace('"', '').replace("'", "").strip()
+                        print(f"   ✅ تم توليد موضوع ديناميكي جديد [{category}]: {clean_topic}")
+                        return clean_topic
+        except Exception as e:
+            continue
+            
+    # Fallback to random from ALL_TOPICS if AI generation fails
+    return random.choice(ALL_TOPICS)
+
 def generate_script():
     """Generate a 15-minute video script with UNIQUE topic each time"""
-    # Load history and filter topics
     history = load_history()
     published = set(history.get("published_topics", []))
     
-    # Filter available topics that haven't been published recently
-    available_topics = [t for t in ALL_TOPICS if t not in published]
-    
-    # If all topics are used, reset history or pick from all
-    if not available_topics:
-        print("   ⚠️ جميع المواضيع تم استخدامها مسبقاً، البدء من جديد...")
-        available_topics = ALL_TOPICS
+    # Generate dynamically via AI matching weekly schedule, ensuring uniqueness
+    topic = None
+    for _ in range(5):
+        candidate = generate_dynamic_topic()
+        if candidate not in published:
+            topic = candidate
+            break
+            
+    if not topic:
+        # If dynamic collides, fallback to random available from ALL_TOPICS
+        available = [t for t in ALL_TOPICS if t not in published]
+        topic = random.choice(available if available else ALL_TOPICS)
         
-    # Pick a random topic from available ones
-    topic = random.choice(available_topics)
-    
-    # Save to history immediately
     save_history(topic)
     
     unique_seed = hashlib.md5(f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{random.randint(1,99999)}".encode()).hexdigest()[:8]
