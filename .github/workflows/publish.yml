@@ -28,9 +28,7 @@ jobs:
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
       - name: Commit and push history.json
         if: always()
         run: |
@@ -47,3 +45,29 @@ jobs:
           name: generated-video
           path: output/video.mp4
           retention-days: 7
+
+      - name: Send Email on Success
+        if: success() && env.MAIL_USERNAME != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "🎉 نجاح تشغيل ونشر فيديو فيسبوك"
+          body: "تم توليد ونشر الفيديو بنجاح على صفحة فيسبوك الخاصة بك اليوم."
+          to: ${{ secrets.MAIL_USERNAME }}
+          from: Facebook AI Publisher
+
+      - name: Send Email on Failure
+        if: failure() && env.MAIL_USERNAME != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "❌ تنبيه: فشل تشغيل نشر فيديو فيسبوك"
+          body: "حدث خطأ أثناء محاولة توليد أو نشر الفيديو على فيسبوك. يرجى مراجعة سجلات GitHub Actions."
+          to: ${{ secrets.MAIL_USERNAME }}
+          from: Facebook AI Publisher
