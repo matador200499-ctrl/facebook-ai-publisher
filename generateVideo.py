@@ -609,10 +609,55 @@ FALLBACK_SCRIPTS = [
 
 # ─── Step 1: Generate 15-Minute Script ──────────────────────────────────────
 
+def load_history():
+    """Load publication history from history.json"""
+    history_path = os.path.join(os.path.dirname(__file__), "history.json")
+    if os.path.exists(history_path):
+        try:
+            with open(history_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    return {"published_topics": [], "last_updated": ""}
+
+def save_history(topic):
+    """Save the published topic to history.json"""
+    history_path = os.path.join(os.path.dirname(__file__), "history.json")
+    history = load_history()
+    
+    # Add topic if not exists
+    if topic not in history["published_topics"]:
+        history["published_topics"].append(topic)
+    
+    # Keep only the last 100 topics to prevent file growing too large
+    if len(history["published_topics"]) > 100:
+        history["published_topics"] = history["published_topics"][-100:]
+        
+    history["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    with open(history_path, "w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
 def generate_script():
     """Generate a 15-minute video script with UNIQUE topic each time"""
-    # Pick a random topic (never the same sequence)
-    topic = random.choice(ALL_TOPICS)
+    # Load history and filter topics
+    history = load_history()
+    published = set(history.get("published_topics", []))
+    
+    # Filter available topics that haven't been published recently
+    available_topics = [t for t in ALL_TOPICS if t not in published]
+    
+    # If all topics are used, reset history or pick from all
+    if not available_topics:
+        print("   ⚠️ جميع المواضيع تم استخدامها مسبقاً، البدء من جديد...")
+        available_topics = ALL_TOPICS
+        
+    # Pick a random topic from available ones
+    topic = random.choice(available_topics)
+    
+    # Save to history immediately
+    save_history(topic)
+    
     unique_seed = hashlib.md5(f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{random.randint(1,99999)}".encode()).hexdigest()[:8]
 
     prompt = f"""أنت كاتب سكربتات فيديو احترافي باللغة العربية. اكتب سكربت فيديو طويل جداً (15 دقيقة قراءة) باللغة العربية الفصحى عن:
