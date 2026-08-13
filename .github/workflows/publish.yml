@@ -71,3 +71,11 @@ jobs:
           body: "حدث خطأ أثناء محاولة توليد أو نشر الفيديو على فيسبوك. يرجى مراجعة سجلات GitHub Actions."
           to: ${{ secrets.MAIL_USERNAME }}
           from: Facebook AI Publisher
+
+      - name: Send Weekly Report on Sunday
+        if: github.event_name == 'schedule' && github.ref == 'refs/heads/main' && env.MAIL_USERNAME != ''
+        run: |
+          python3 weeklyReport.py
+        env:
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}

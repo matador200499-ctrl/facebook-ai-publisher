@@ -659,9 +659,12 @@ def generate_dynamic_topic():
     print(10*"=" + f" جدول المحتوى الأسبوعي: {day_name} ({category}) " + 10*"=")
     
     # Use Gemini to generate a brand new unique topic matching this category
+    # Target Audience: Young professionals, developers, and success seekers (bobo_yasoo style)
     prompt = f"""أنت مدير محتوى لقناة برمجية وتحفيزية ناجحة باسم bobo_yasoo.
+الجمهور المستهدف: الشباب الطموح، المبرمجين، والباحثين عن النجاح المالي والمهني.
 اليوم هو يوم {day_name} وتصنيف المحتوى لهذا اليوم هو: "{category}" (الوصف: {schedule_info['desc']}).
-قم بتوليد عنوان موضوع فيديو جديد كلياً، جذاب، احترافي، ومميز جداً (باللغة العربية الفصحى) يندرج تحت هذا التصنيف ولا يتكرر تقليدياً.
+قم بتوليد عنوان موضوع فيديو جديد كلياً، جذاب، احترافي، ومميز جداً (باللغة العربية الفصحى) يندرج تحت هذا التصنيف.
+يجب أن يكون العنوان مصاغاً بأسلوب "Niche Targeting" لجذب الجمهور المهتم بالتقنية والإنتاجية بدقة عالية.
 أرجع فقط عنوان الموضوع بدون أي مقدمات أو شرح إضافي."""
 
     for model in GEMINI_MODELS:
@@ -1051,13 +1054,14 @@ def create_video(images, audio_path, output_path):
     clips = []
     for i, img in enumerate(valid_images):
         clip_path = os.path.join(TEMP_DIR, f"clip_{i:02d}.mp4")
-        # Ken Burns zoom effect
-        zoom = "zoompan=z='min(zoom+0.0008,1.3)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=24"
+        # Fixed Ken Burns zoom effect (removed d=1 which causes issues in some FFmpeg versions)
+        # Using a more stable zoompan syntax for 2026 FFmpeg versions
+        zoom = "zoompan=z='min(zoom+0.001,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=24"
         cmd = [
             "ffmpeg", "-y",
             "-loop", "1", "-i", img,
-            "-vf", f"{zoom},format=yuv420p",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-vf", f"scale=1280:720,setsar=1:1,{zoom},format=yuv420p",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "22",
             "-t", str(duration_per_image),
             "-pix_fmt", "yuv420p", "-r", "24",
             clip_path
