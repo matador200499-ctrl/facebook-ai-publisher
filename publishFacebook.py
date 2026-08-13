@@ -63,8 +63,12 @@ def upload_video(video_path, post_text, title, token):
     try:
         with open(video_path, "rb") as video_file:
             files = {"source": video_file}
+            # Enhance description for Social SEO 2026
+            seo_description = f"{title}\n\n{post_text}\n\n#bobo_yasoo #AI_Content #SocialSEO"
+            
             data = {
-                "description": post_text,
+                "description": seo_description,
+                "title": title, # Adding explicit title for Facebook Video SEO
                 "published": "true",
             }
             
