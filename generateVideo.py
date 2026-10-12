@@ -822,25 +822,52 @@ def parse_script(text):
 # ─── Step 2: Generate Audio ─────────────────────────────────────────────────
 
 async def generate_audio(text, output_path):
-    """Generate Arabic audio using edge-tts"""
-    communicate = edge_tts.Communicate(text, VOICE, rate="-10%")
-    
-    with open(output_path, "wb") as f:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                f.write(chunk["data"])
+    """Generate Arabic audio: try Edge TTS, then fall back to Google TTS."""
+    # Primary provider: Microsoft Edge TTS
+    try:
+        communicate = edge_tts.Communicate(text, VOICE, rate="-10%")
+        with open(output_path, "wb") as f:
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
 
-    file_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
+            raise RuntimeError("Edge TTS returned an empty/invalid audio file")
+        print("   ✅ تم توليد الصوت عبر Edge TTS")
+    except Exception as edge_error:
+        print(f"   ⚠️ Edge TTS فشل: {edge_error}")
+        print("   🔁 تجربة Google TTS كبديل...")
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            from gtts import gTTS
+            gTTS(text=text, lang="ar", slow=False).save(output_path)
+            if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
+                raise RuntimeError("Google TTS returned an empty/invalid audio file")
+            print("   ✅ تم توليد الصوت عبر Google TTS")
+        except Exception as fallback_error:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            raise RuntimeError(
+                f"فشل توليد الصوت عبر Edge TTS وGoogle TTS. "
+                f"Edge: {edge_error}; Google: {fallback_error}"
+            ) from fallback_error
+
+    file_size = os.path.getsize(output_path)
     print(f"   حجم الصوت: {file_size / (1024*1024):.1f} MB")
-    
+
     dur_result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", output_path],
         capture_output=True, text=True, timeout=10
     )
-    duration = float(dur_result.stdout.strip()) if dur_result.stdout.strip() else 0
+    if dur_result.returncode != 0 or not dur_result.stdout.strip():
+        raise RuntimeError("ملف الصوت الناتج غير صالح أو تعذر قراءة مدته")
+    duration = float(dur_result.stdout.strip())
+    if duration <= 0:
+        raise RuntimeError("مدة ملف الصوت صفر")
     print(f"   مدة الصوت: {duration/60:.1f} دقيقة ({duration:.0f} ثانية)")
-    
+
     return duration
 
 
